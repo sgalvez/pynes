@@ -5,16 +5,36 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 
-from .app import (
-    DEFAULT_INSTRUCTIONS_PER_FRAME,
-    DEFAULT_SCALE,
-    DisplayUnavailableError,
-    run_desktop,
-)
 from .cartridge import CartridgeError
-from .debug import open_trace_sink, run_smoke_test
 from .logging_config import configure_logging
+from .settings import DEFAULT_INSTRUCTIONS_PER_FRAME, DEFAULT_SCALE
 from .version import get_version
+
+
+class DisplayUnavailableError(RuntimeError):
+    """Raised when the desktop display backend is unavailable."""
+
+
+def open_trace_sink(trace_file):
+    from .debug import open_trace_sink as debug_open_trace_sink
+
+    return debug_open_trace_sink(trace_file)
+
+
+def run_smoke_test(*args, **kwargs):
+    from .debug import run_smoke_test as debug_run_smoke_test
+
+    return debug_run_smoke_test(*args, **kwargs)
+
+
+def run_desktop(*args, **kwargs):
+    from .app import DisplayUnavailableError as AppDisplayUnavailableError
+    from .app import run_desktop as app_run_desktop
+
+    try:
+        return app_run_desktop(*args, **kwargs)
+    except AppDisplayUnavailableError as exc:
+        raise DisplayUnavailableError(str(exc)) from exc
 
 
 def build_parser() -> argparse.ArgumentParser:

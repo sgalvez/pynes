@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntFlag
-from typing import Protocol
+from typing import ClassVar, Protocol
 
 
 class CPUError(RuntimeError):
@@ -53,6 +54,8 @@ class MemoryBus:
 class CPU6502:
     """Official-opcode 6502 execution core."""
 
+    _opcode_table: ClassVar[list[Callable[[CPU6502], None] | None]] = [None] * 256
+
     bus: Bus
     a: int = 0
     x: int = 0
@@ -84,11 +87,11 @@ class CPU6502:
     def step(self) -> int:
         """Execute one instruction and return the cycles it consumed."""
         opcode = self._fetch_byte()
-        method = getattr(self, f"_op_{opcode:02x}", None)
+        method = self._opcode_table[opcode]
         if method is None:
             raise CPUError(f"Unsupported opcode 0x{opcode:02X} at 0x{(self.pc - 1) & 0xFFFF:04X}")
         before = self.cycles
-        method()
+        method(self)
         self.status |= int(StatusFlag.UNUSED)
         return self.cycles - before
 
@@ -483,6 +486,7 @@ def _op_bit_abs(self: CPU6502) -> None:
 
 
 def _install_official_opcodes() -> None:
+    opcode_table = CPU6502._opcode_table
     read_ops = {
         "_ora": [
             (0x09, "_imm", 2, False),
@@ -573,7 +577,9 @@ def _install_official_opcodes() -> None:
     }
     for operation, specs in read_ops.items():
         for opcode, addr_mode, cycles, page_cycle in specs:
-            setattr(CPU6502, f"_op_{opcode:02x}", _make_read_op(operation, addr_mode, cycles, page_cycle))
+            method = _make_read_op(operation, addr_mode, cycles, page_cycle)
+            opcode_table[opcode] = method
+            setattr(CPU6502, f"_op_{opcode:02x}", method)
 
     stores = [
         ("a", [(0x85, "_addr_zp", 3), (0x95, "_addr_zpx", 4), (0x8D, "_addr_abs", 4), (0x9D, "_addr_absx", 5), (0x99, "_addr_absy", 5), (0x81, "_addr_indx", 6), (0x91, "_addr_indy", 6)]),
@@ -582,7 +588,9 @@ def _install_official_opcodes() -> None:
     ]
     for register, specs in stores:
         for opcode, addr_mode, cycles in specs:
-            setattr(CPU6502, f"_op_{opcode:02x}", _make_store_op(register, addr_mode, cycles))
+            method = _make_store_op(register, addr_mode, cycles)
+            opcode_table[opcode] = method
+            setattr(CPU6502, f"_op_{opcode:02x}", method)
 
     modifies = {
         "_asl_value": [(0x06, "_addr_zp", 5), (0x16, "_addr_zpx", 6), (0x0E, "_addr_abs", 6), (0x1E, "_addr_absx", 7)],
@@ -594,10 +602,14 @@ def _install_official_opcodes() -> None:
     }
     for operation, specs in modifies.items():
         for opcode, addr_mode, cycles in specs:
-            setattr(CPU6502, f"_op_{opcode:02x}", _make_modify_op(operation, addr_mode, cycles))
+            method = _make_modify_op(operation, addr_mode, cycles)
+            opcode_table[opcode] = method
+            setattr(CPU6502, f"_op_{opcode:02x}", method)
 
     for opcode, operation in [(0x0A, "_asl_value"), (0x2A, "_rol_value"), (0x4A, "_lsr_value"), (0x6A, "_ror_value")]:
-        setattr(CPU6502, f"_op_{opcode:02x}", _make_accumulator_op(operation))
+        method = _make_accumulator_op(operation)
+        opcode_table[opcode] = method
+        setattr(CPU6502, f"_op_{opcode:02x}", method)
 
     for opcode, flag, expected in [
         (0x10, StatusFlag.NEGATIVE, False),
@@ -609,7 +621,9 @@ def _install_official_opcodes() -> None:
         (0xD0, StatusFlag.ZERO, False),
         (0xF0, StatusFlag.ZERO, True),
     ]:
-        setattr(CPU6502, f"_op_{opcode:02x}", _make_branch_op(flag, expected))
+        method = _make_branch_op(flag, expected)
+        opcode_table[opcode] = method
+        setattr(CPU6502, f"_op_{opcode:02x}", method)
 
     for opcode, flag, value in [
         (0x18, StatusFlag.CARRY, False),
@@ -619,7 +633,9 @@ def _install_official_opcodes() -> None:
         (0xD8, StatusFlag.DECIMAL, False),
         (0xF8, StatusFlag.DECIMAL, True),
     ]:
-        setattr(CPU6502, f"_op_{opcode:02x}", _make_flag_op(flag, value))
+        method = _make_flag_op(flag, value)
+        opcode_table[opcode] = method
+        setattr(CPU6502, f"_op_{opcode:02x}", method)
 
     for opcode, source, destination in [
         (0xAA, "a", "x"),
@@ -627,10 +643,14 @@ def _install_official_opcodes() -> None:
         (0x8A, "x", "a"),
         (0x98, "y", "a"),
     ]:
-        setattr(CPU6502, f"_op_{opcode:02x}", _make_transfer_op(source, destination))
+        method = _make_transfer_op(source, destination)
+        opcode_table[opcode] = method
+        setattr(CPU6502, f"_op_{opcode:02x}", method)
 
     for opcode, register, delta in [(0xE8, "x", 1), (0xC8, "y", 1), (0xCA, "x", -1), (0x88, "y", -1)]:
-        setattr(CPU6502, f"_op_{opcode:02x}", _make_inc_register_op(register, delta))
+        method = _make_inc_register_op(register, delta)
+        opcode_table[opcode] = method
+        setattr(CPU6502, f"_op_{opcode:02x}", method)
 
     fixed = {
         0x00: _op_brk,
@@ -651,6 +671,7 @@ def _install_official_opcodes() -> None:
         0xEA: _op_nop,
     }
     for opcode, method in fixed.items():
+        opcode_table[opcode] = method
         setattr(CPU6502, f"_op_{opcode:02x}", method)
 
 
