@@ -75,6 +75,51 @@ class Mapper0:
             )
         return address
 
+    def write_cpu_address(self, address: int, value: int) -> None:
+        """Ignore CPU writes to PRG ROM space."""
+
+
+@dataclass
+class Mapper2:
+    """Mapper 2 / UxROM address mapping with a switchable lower PRG bank."""
+
+    prg_rom_banks: int
+    selected_bank: int = 0
+
+    @property
+    def prg_rom_size(self) -> int:
+        return self.prg_rom_banks * PRG_ROM_BANK_SIZE
+
+    def map_cpu_address(self, address: int) -> int:
+        """Map a CPU PRG ROM address into the cartridge PRG ROM buffer."""
+        if not 0x8000 <= address <= 0xFFFF:
+            raise CartridgeError(
+                f"CPU address 0x{address:04X} is outside PRG ROM range 0x8000-0xFFFF"
+            )
+
+        offset = address & 0x3FFF
+        if 0x8000 <= address <= 0xBFFF:
+            bank = self.selected_bank
+        else:
+            bank = self.prg_rom_banks - 1
+        return (bank * PRG_ROM_BANK_SIZE) + offset
+
+    def map_ppu_address(self, address: int) -> int:
+        """Map a PPU CHR address into the cartridge CHR ROM/RAM buffer."""
+        if not 0x0000 <= address <= 0x1FFF:
+            raise CartridgeError(
+                f"PPU address 0x{address:04X} is outside CHR range 0x0000-0x1FFF"
+            )
+        return address
+
+    def write_cpu_address(self, address: int, value: int) -> None:
+        """Select the switchable PRG ROM bank."""
+        if not 0x8000 <= address <= 0xFFFF:
+            raise CartridgeError(
+                f"CPU address 0x{address:04X} is outside PRG ROM range 0x8000-0xFFFF"
+            )
+        self.selected_bank = (value & 0x0F) % self.prg_rom_banks
+
 
 @dataclass
 class Cartridge:
@@ -83,7 +128,7 @@ class Cartridge:
     header: INESHeader
     prg_rom: bytes
     chr_data: bytearray
-    mapper: Mapper0
+    mapper: Mapper0 | Mapper2
 
     @property
     def mapper_number(self) -> int:
@@ -100,6 +145,10 @@ class Cartridge:
     def read_prg(self, address: int) -> int:
         """Read a byte from CPU-visible PRG ROM."""
         return self.prg_rom[self.mapper.map_cpu_address(address)]
+
+    def write_prg(self, address: int, value: int) -> None:
+        """Write a byte to CPU-visible cartridge space."""
+        self.mapper.write_cpu_address(address, value & 0xFF)
 
     def read_chr(self, address: int) -> int:
         """Read a byte from PPU-visible CHR ROM/RAM."""
@@ -146,12 +195,26 @@ def parse_ines_header(data: bytes) -> INESHeader:
 def load_ines_rom(data: bytes) -> Cartridge:
     """Load a supported iNES ROM from bytes."""
     header = parse_ines_header(data)
-    if header.prg_rom_banks not in (1, 2):
-        raise CartridgeError(
-            f"Mapper 0 requires 1 or 2 PRG ROM banks, got {header.prg_rom_banks}"
+    if header.mapper_number == 0:
+        if header.prg_rom_banks not in (1, 2):
+            raise CartridgeError(
+                "Invalid Mapper 0 ROM: expected 1 or 2 PRG ROM banks, "
+                f"got {header.prg_rom_banks}. The ROM header may declare the wrong mapper."
+            )
+        mapper: Mapper0 | Mapper2 = Mapper0(
+            prg_rom_size=header.prg_rom_size,
+            has_chr_ram=header.chr_rom_banks == 0,
         )
-    if header.mapper_number != 0:
-        raise CartridgeError(f"Unsupported mapper {header.mapper_number}; only Mapper 0 is supported")
+    elif header.mapper_number == 2:
+        if header.prg_rom_banks < 2:
+            raise CartridgeError(
+                f"Mapper 2 requires at least 2 PRG ROM banks, got {header.prg_rom_banks}"
+            )
+        mapper = Mapper2(prg_rom_banks=header.prg_rom_banks)
+    else:
+        raise CartridgeError(
+            f"Unsupported mapper {header.mapper_number}; supported mappers: 0, 2"
+        )
 
     prg_start = INES_HEADER_SIZE + (512 if header.has_trainer else 0)
     chr_start = prg_start + header.prg_rom_size
@@ -172,7 +235,7 @@ def load_ines_rom(data: bytes) -> Cartridge:
         header=header,
         prg_rom=prg_rom,
         chr_data=chr_data,
-        mapper=Mapper0(prg_rom_size=len(prg_rom), has_chr_ram=header.chr_rom_banks == 0),
+        mapper=mapper,
     )
 
 

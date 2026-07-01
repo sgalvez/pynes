@@ -56,6 +56,13 @@ def test_unsupported_mapper_fails_with_clear_error() -> None:
         load_ines_rom(rom)
 
 
+def test_invalid_mapper0_prg_bank_count_fails_with_clear_error() -> None:
+    rom = build_rom(prg_banks=16)
+
+    with pytest.raises(CartridgeError, match="Invalid Mapper 0 ROM"):
+        load_ines_rom(rom)
+
+
 def test_mapper0_reads_16kb_prg_rom_with_mirroring() -> None:
     cartridge = load_ines_rom(build_rom(prg_banks=1, chr_banks=1))
 
@@ -93,6 +100,26 @@ def test_chr_ram_is_allocated_when_rom_has_no_chr_banks() -> None:
     cartridge.write_chr(0x0000, 0x1FF)
 
     assert cartridge.read_chr(0x0000) == 0xFF
+
+
+def test_mapper2_switches_lower_prg_bank_and_keeps_last_bank_fixed() -> None:
+    header = bytearray(16)
+    header[:4] = b"NES\x1a"
+    header[4] = 4
+    header[5] = 0
+    header[6] = 0x20
+    prg_rom = b"".join(bytes([bank]) * PRG_ROM_BANK_SIZE for bank in range(4))
+    cartridge = load_ines_rom(bytes(header) + prg_rom)
+
+    assert cartridge.mapper_number == 2
+    assert cartridge.read_prg(0x8000) == 0
+    assert cartridge.read_prg(0xC000) == 3
+
+    cartridge.write_prg(0x8000, 2)
+
+    assert cartridge.read_prg(0x8000) == 2
+    assert cartridge.read_prg(0xBFFF) == 2
+    assert cartridge.read_prg(0xC000) == 3
 
 
 def test_truncated_rom_fails_with_clear_error() -> None:
