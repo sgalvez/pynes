@@ -72,6 +72,15 @@ class CPU6502:
         self.pc = self._read_u16(0xFFFC)
         self.cycles = 7
 
+    def nmi(self) -> None:
+        """Service a non-maskable interrupt."""
+        self._push((self.pc >> 8) & 0xFF)
+        self._push(self.pc & 0xFF)
+        self._push(self.status & ~int(StatusFlag.BREAK) | int(StatusFlag.UNUSED))
+        self.set_flag(StatusFlag.INTERRUPT_DISABLE, True)
+        self.pc = self._read_u16(0xFFFA)
+        self.cycles += 7
+
     def step(self) -> int:
         """Execute one instruction and return the cycles it consumed."""
         opcode = self._fetch_byte()
