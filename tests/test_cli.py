@@ -5,6 +5,7 @@ import pytest
 from nes_py import __version__
 import nes_py.cli
 from nes_py.cli import main
+from nes_py.debug import SmokeTestResult
 
 
 def test_cli_help(capsys: pytest.CaptureFixture[str]) -> None:
@@ -67,7 +68,7 @@ def test_cli_smoke_test_mode(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Cap
         include_disassembly: bool,
     ):
         calls.append((rom, instructions, include_disassembly))
-        return nes_py.cli.SmokeTestResult(
+        return SmokeTestResult(
             instructions=instructions,
             cpu_cycles=6,
             pc=0x8002,
