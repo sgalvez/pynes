@@ -13,7 +13,7 @@ from .app import (
     run_desktop,
 )
 from .cartridge import CartridgeError
-from .debug import SmokeTestResult, open_trace_sink, run_smoke_test
+from .debug import open_trace_sink, run_smoke_test
 from .logging_config import configure_logging
 
 

@@ -1,19 +1,17 @@
-name: CI
+name: Release
 
 on:
   push:
-    branches: ["main"]
-  pull_request:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
 
 jobs:
-  test:
-    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ["ubuntu-latest", "windows-latest", "macos-latest"]
-        python-version: ["3.11"]
+  release:
+    name: Build and publish GitHub Release
+    runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository
@@ -22,7 +20,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.11"
           cache: "pip"
 
       - name: Install package
@@ -41,3 +39,14 @@ jobs:
 
       - name: Verify module CLI version
         run: python -m nes_py --version
+
+      - name: Build package artifacts
+        run: python -m build
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: docs/releases/${{ github.ref_name }}.md
+          files: |
+            dist/*.tar.gz
+            dist/*.whl

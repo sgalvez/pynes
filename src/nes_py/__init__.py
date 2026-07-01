@@ -1,5 +1,7 @@
 """Python NES emulator project package."""
 
+from importlib.metadata import PackageNotFoundError, version
+
 from .cartridge import (
     Cartridge,
     CartridgeError,
@@ -14,7 +16,10 @@ from .debug import SmokeTestResult, disassemble_instruction, format_cpu_trace, r
 from .nes import NES, NESBus, NESBusError
 from .ppu import PPU, SCREEN_HEIGHT, SCREEN_WIDTH
 
-__version__ = "0.1.0"
+try:
+    __version__ = version("pynes")
+except PackageNotFoundError:
+    __version__ = "0+unknown"
 
 __all__ = [
     "Cartridge",
