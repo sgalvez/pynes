@@ -12,6 +12,7 @@ from .app import (
     DisplayUnavailableError,
     run_desktop,
 )
+from .cartridge import CartridgeError
 from .debug import SmokeTestResult, open_trace_sink, run_smoke_test
 from .logging_config import configure_logging
 
@@ -81,30 +82,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.rom is None:
         parser.print_help()
         return 0
-    if args.smoke_test is not None:
-        trace_sink = None
-        trace_handle = None
-        try:
-            if args.trace:
-                trace_sink, trace_handle = open_trace_sink(args.trace_file)
-            result = run_smoke_test(
-                args.rom,
-                instructions=args.smoke_test,
-                trace_sink=trace_sink,
-                include_disassembly=args.disassemble,
-            )
-        finally:
-            if trace_handle is not None:
-                trace_handle.close()
-        print(
-            "Smoke test completed: "
-            f"instructions={result.instructions} "
-            f"cpu_cycles={result.cpu_cycles} "
-            f"pc=0x{result.pc:04X} "
-            f"frame={result.frame}"
-        )
-        return 0
     try:
+        if args.smoke_test is not None:
+            trace_sink = None
+            trace_handle = None
+            try:
+                if args.trace:
+                    trace_sink, trace_handle = open_trace_sink(args.trace_file)
+                result = run_smoke_test(
+                    args.rom,
+                    instructions=args.smoke_test,
+                    trace_sink=trace_sink,
+                    include_disassembly=args.disassemble,
+                )
+            finally:
+                if trace_handle is not None:
+                    trace_handle.close()
+            print(
+                "Smoke test completed: "
+                f"instructions={result.instructions} "
+                f"cpu_cycles={result.cpu_cycles} "
+                f"pc=0x{result.pc:04X} "
+                f"frame={result.frame}"
+            )
+            return 0
         return run_desktop(
             args.rom,
             scale=args.scale,
@@ -113,5 +114,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             disassemble=args.disassemble,
             trace_file=args.trace_file,
         )
-    except DisplayUnavailableError as exc:
+    except (CartridgeError, DisplayUnavailableError) as exc:
         parser.exit(2, f"{exc}\n")
+    except OSError as exc:
+        parser.exit(2, f"Unable to load ROM {args.rom!r}: {exc}\n")

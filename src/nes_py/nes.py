@@ -94,7 +94,7 @@ class NESBus:
         elif 0x4020 <= address <= 0x7FFF:
             self.registers.expansion[address - 0x4020] = value
         elif 0x8000 <= address <= 0xFFFF:
-            return
+            self.cartridge.write_prg(address, value)
         else:
             raise NESBusError(f"Address 0x{address:04X} is outside the CPU address space")
 

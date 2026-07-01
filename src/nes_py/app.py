@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
+import warnings
 
 from .debug import make_trace_callback, open_trace_sink
 from .input import Button
@@ -37,8 +39,15 @@ class KeyBindings:
 
 def load_pygame():
     """Import pygame lazily so headless tests do not need it installed."""
+    os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
     try:
-        import pygame  # type: ignore[import-not-found]
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="Your system is avx2 capable.*",
+                category=RuntimeWarning,
+            )
+            import pygame  # type: ignore[import-not-found]
     except ImportError as exc:
         raise DisplayUnavailableError(
             "pygame is required for the desktop window. Install it with "
