@@ -7,6 +7,7 @@ from collections.abc import Sequence
 
 from . import __version__
 from .app import DEFAULT_INSTRUCTIONS_PER_FRAME, DEFAULT_SCALE, run_desktop
+from .debug import SmokeTestResult, open_trace_sink, run_smoke_test
 from .logging_config import configure_logging
 
 
@@ -34,6 +35,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="CPU instructions to execute before drawing each frame",
     )
     parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="print CPU trace lines while running",
+    )
+    parser.add_argument(
+        "--disassemble",
+        action="store_true",
+        help="include best-effort instruction disassembly in CPU traces",
+    )
+    parser.add_argument(
+        "--trace-file",
+        help="write CPU trace lines to this file instead of stdout",
+    )
+    parser.add_argument(
+        "--smoke-test",
+        type=int,
+        metavar="INSTRUCTIONS",
+        help="load the ROM, step a fixed instruction count, print a summary, and exit",
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"%(prog)s {__version__}",
@@ -55,8 +76,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.rom is None:
         parser.print_help()
         return 0
+    if args.smoke_test is not None:
+        trace_sink = None
+        trace_handle = None
+        try:
+            if args.trace:
+                trace_sink, trace_handle = open_trace_sink(args.trace_file)
+            result = run_smoke_test(
+                args.rom,
+                instructions=args.smoke_test,
+                trace_sink=trace_sink,
+                include_disassembly=args.disassemble,
+            )
+        finally:
+            if trace_handle is not None:
+                trace_handle.close()
+        print(
+            "Smoke test completed: "
+            f"instructions={result.instructions} "
+            f"cpu_cycles={result.cpu_cycles} "
+            f"pc=0x{result.pc:04X} "
+            f"frame={result.frame}"
+        )
+        return 0
     return run_desktop(
         args.rom,
         scale=args.scale,
         instructions_per_frame=args.instructions_per_frame,
+        trace=args.trace,
+        disassemble=args.disassemble,
+        trace_file=args.trace_file,
     )

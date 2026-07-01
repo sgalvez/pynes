@@ -39,6 +39,8 @@ After installation, run:
 nes-py --help
 nes-py --version
 nes-py path/to/game.nes
+nes-py path/to/game.nes --trace --disassemble
+nes-py path/to/game.nes --smoke-test 1000
 ```
 
 You can also run the package module directly:
@@ -66,6 +68,42 @@ python -m pip install -e ".[display]"
 - R: Reset
 - Escape or window close: Quit
 
+## Debugging And Validation
+
+Use `--trace` to print CPU trace lines while running. Each trace includes the
+program counter, opcode, registers, status flags, stack pointer, and cycle
+count. Add `--disassemble` for a best-effort instruction mnemonic:
+
+```bash
+python -m nes_py path/to/game.nes --trace --disassemble
+```
+
+For headless validation, use `--smoke-test` with a fixed instruction count. This
+loads the ROM, steps CPU instructions, prints a summary, and exits without
+opening a window:
+
+```bash
+python -m nes_py path/to/game.nes --smoke-test 1000 --trace --disassemble
+```
+
+Write longer traces to a file with `--trace-file`:
+
+```bash
+python -m nes_py path/to/game.nes --smoke-test 10000 --trace --trace-file trace.log
+```
+
+Use legal public-domain/homebrew ROMs, test ROMs whose licenses permit local
+use, or your own locally supplied ROM dumps. Do not commit copyrighted ROMs to
+the repository.
+
+## Current Limitations
+
+- Mapper 0 / NROM only.
+- PPU behavior is incomplete and not cycle-accurate.
+- Background rendering is basic; sprite rendering is not implemented.
+- No APU/audio support.
+- Input supports one keyboard-backed controller.
+
 ## Running Tests
 
 ```bash
@@ -90,6 +128,7 @@ python -m pytest
 |       |-- cartridge.py
 |       |-- cli.py
 |       |-- cpu.py
+|       |-- debug.py
 |       |-- input.py
 |       |-- logging_config.py
 |       |-- nes.py
