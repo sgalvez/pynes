@@ -11,9 +11,7 @@ from .debug import make_trace_callback, open_trace_sink
 from .input import Button
 from .nes import NES
 from .ppu import SCREEN_HEIGHT, SCREEN_WIDTH
-
-DEFAULT_SCALE = 3
-DEFAULT_INSTRUCTIONS_PER_FRAME = 30_000
+from .settings import DEFAULT_INSTRUCTIONS_PER_FRAME, DEFAULT_SCALE
 
 
 class DisplayUnavailableError(RuntimeError):

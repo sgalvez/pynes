@@ -128,6 +128,18 @@ python -m pytest
 python -m ruff check .
 ```
 
+## Performance Checks
+
+Run the lightweight profiler with:
+
+```bash
+python scripts/profile_performance.py
+```
+
+It measures startup, package imports, CI/CD script generation, and available
+emulator operations. See `docs/performance/performance-report.md` for the
+current baseline and after-optimization notes.
+
 ## Building Packages
 
 Build the source distribution and wheel with:
