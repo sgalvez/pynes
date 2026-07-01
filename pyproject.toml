@@ -25,6 +25,9 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
+display = [
+  "pygame>=2.6",
+]
 dev = [
   "pytest>=8.0",
 ]
