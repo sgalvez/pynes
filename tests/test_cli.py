@@ -80,3 +80,21 @@ def test_cli_smoke_test_mode(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Cap
 
     assert calls == [("game.nes", 2, True)]
     assert "Smoke test completed" in capsys.readouterr().out
+
+
+def test_cli_reports_missing_display_dependency_without_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_run_desktop(*args, **kwargs) -> int:
+        raise nes_py.cli.DisplayUnavailableError("install pygame please")
+
+    monkeypatch.setattr(nes_py.cli, "run_desktop", fake_run_desktop)
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["game.nes"])
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "install pygame please" in captured.err
+    assert "Traceback" not in captured.err

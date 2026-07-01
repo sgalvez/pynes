@@ -29,6 +29,7 @@ display = [
   "pygame>=2.6",
 ]
 dev = [
+  "pygame>=2.6",
   "pytest>=8.0",
 ]
 
@@ -41,3 +42,4 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+pythonpath = ["src"]
