@@ -39,7 +39,9 @@ def test_ppu_apu_controller_and_expansion_register_stubs_do_not_crash() -> None:
     bus.write(0x4016, 0x40)
     bus.write(0x4020, 0x50)
 
-    assert bus.read(0x2000) == 0x20
+    assert bus.ppu is not None
+    assert bus.ppu.ctrl == 0x20
+    assert bus.read(0x2002) == 0
     assert bus.read(0x4000) == 0x30
     assert bus.read(0x4016) == 0x40
     assert bus.read(0x4020) == 0x50
