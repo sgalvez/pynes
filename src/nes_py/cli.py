@@ -6,7 +6,12 @@ import argparse
 from collections.abc import Sequence
 
 from . import __version__
-from .app import DEFAULT_INSTRUCTIONS_PER_FRAME, DEFAULT_SCALE, run_desktop
+from .app import (
+    DEFAULT_INSTRUCTIONS_PER_FRAME,
+    DEFAULT_SCALE,
+    DisplayUnavailableError,
+    run_desktop,
+)
 from .debug import SmokeTestResult, open_trace_sink, run_smoke_test
 from .logging_config import configure_logging
 
@@ -99,11 +104,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"frame={result.frame}"
         )
         return 0
-    return run_desktop(
-        args.rom,
-        scale=args.scale,
-        instructions_per_frame=args.instructions_per_frame,
-        trace=args.trace,
-        disassemble=args.disassemble,
-        trace_file=args.trace_file,
-    )
+    try:
+        return run_desktop(
+            args.rom,
+            scale=args.scale,
+            instructions_per_frame=args.instructions_per_frame,
+            trace=args.trace,
+            disassemble=args.disassemble,
+            trace_file=args.trace_file,
+        )
+    except DisplayUnavailableError as exc:
+        parser.exit(2, f"{exc}\n")
