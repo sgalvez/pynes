@@ -9,6 +9,7 @@ from .cartridge import (
     load_ines_rom,
 )
 from .cpu import CPU6502, CPUError, MemoryBus, StatusFlag
+from .nes import NES, NESBus, NESBusError
 
 __version__ = "0.1.0"
 
@@ -20,6 +21,9 @@ __all__ = [
     "INESHeader",
     "MemoryBus",
     "Mirroring",
+    "NES",
+    "NESBus",
+    "NESBusError",
     "StatusFlag",
     "__version__",
     "load_ines_file",
