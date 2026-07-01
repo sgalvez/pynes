@@ -13,6 +13,15 @@ the initial MVP.
 
 - Python 3.11 or newer
 
+## Release Status
+
+- Current version: `0.0.1`
+- Supported Python: Python 3.11+
+- Validated platforms:
+  - Windows
+  - Linux
+  - macOS
+
 ## Development Setup
 
 Create a virtual environment, install the project in editable mode, and include
@@ -31,6 +40,13 @@ On Windows PowerShell, activate the environment with:
 .\.venv\Scripts\Activate.ps1
 ```
 
+For release validation and package builds, the `dev` extra includes pytest,
+Ruff, pygame, and Python build tooling:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
 ## Running The CLI
 
 After installation, run:
@@ -47,6 +63,7 @@ You can also run the package module directly:
 
 ```bash
 python -m nes_py --help
+python -m nes_py --version
 python -m nes_py path/to/game.nes
 ```
 
@@ -98,7 +115,7 @@ the repository.
 
 ## Current Limitations
 
-- Mapper 0 / NROM only.
+- Mapper support is incomplete.
 - PPU behavior is incomplete and not cycle-accurate.
 - Background rendering is basic; sprite rendering is not implemented.
 - No APU/audio support.
@@ -108,7 +125,56 @@ the repository.
 
 ```bash
 python -m pytest
+python -m ruff check .
 ```
+
+## Building Packages
+
+Build the source distribution and wheel with:
+
+```bash
+python -m build
+```
+
+The build writes release artifacts under `dist/`:
+
+```text
+dist/*.tar.gz
+dist/*.whl
+```
+
+## Installing From A Release Artifact
+
+Download the wheel from a GitHub Release, then install it with:
+
+```bash
+python -m pip install nes_py-0.0.1-py3-none-any.whl
+```
+
+Verify the installed CLI:
+
+```bash
+python -m nes_py --help
+python -m nes_py --version
+nes-py --help
+nes-py --version
+```
+
+## Creating A Release
+
+Maintainers create a GitHub Release by pushing a version tag:
+
+```bash
+git checkout main
+git pull
+git tag v0.0.1
+git push origin v0.0.1
+```
+
+Pushing the tag triggers the release workflow. The workflow installs the project,
+runs tests and linting, builds the source distribution and wheel, creates or
+updates the GitHub Release, and uploads the package artifacts. This project does
+not publish to PyPI as part of the release workflow.
 
 ## Project Layout
 
@@ -119,7 +185,11 @@ python -m pytest
 |-- .gitignore
 |-- .github/
 |   `-- workflows/
-|       `-- ci.yml
+|       |-- ci.yml
+|       `-- release.yml
+|-- docs/
+|   `-- releases/
+|       `-- v0.0.1.md
 |-- src/
 |   `-- nes_py/
 |       |-- __init__.py
