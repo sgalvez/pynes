@@ -10,6 +10,7 @@ INES_MAGIC = b"NES\x1a"
 INES_HEADER_SIZE = 16
 PRG_ROM_BANK_SIZE = 16 * 1024
 CHR_ROM_BANK_SIZE = 8 * 1024
+CHR_BANK_4KB_SIZE = 4 * 1024
 CHR_RAM_SIZE = 8 * 1024
 
 
@@ -80,6 +81,80 @@ class Mapper0:
 
 
 @dataclass
+class Mapper1:
+    """Mapper 1 / MMC1 serial-register address mapping."""
+
+    prg_rom_banks: int
+    chr_rom_banks: int
+    control: int = 0x0C
+    chr_bank0: int = 0
+    chr_bank1: int = 0
+    prg_bank: int = 0
+    shift_register: int = 0x10
+
+    def map_cpu_address(self, address: int) -> int:
+        """Map a CPU PRG ROM address into the cartridge PRG ROM buffer."""
+        if not 0x8000 <= address <= 0xFFFF:
+            raise CartridgeError(
+                f"CPU address 0x{address:04X} is outside PRG ROM range 0x8000-0xFFFF"
+            )
+
+        prg_mode = (self.control >> 2) & 0x03
+        selected_bank = self.prg_bank & 0x0F
+        if prg_mode in (0, 1):
+            bank = (selected_bank & 0x0E) + ((address - 0x8000) // PRG_ROM_BANK_SIZE)
+        elif prg_mode == 2:
+            bank = 0 if address < 0xC000 else selected_bank
+        else:
+            bank = selected_bank if address < 0xC000 else self.prg_rom_banks - 1
+        return ((bank % self.prg_rom_banks) * PRG_ROM_BANK_SIZE) + (address & 0x3FFF)
+
+    def map_ppu_address(self, address: int) -> int:
+        """Map a PPU CHR address into the cartridge CHR ROM/RAM buffer."""
+        if not 0x0000 <= address <= 0x1FFF:
+            raise CartridgeError(
+                f"PPU address 0x{address:04X} is outside CHR range 0x0000-0x1FFF"
+            )
+
+        chr_bank_count = self.chr_rom_banks * 2 if self.chr_rom_banks else 2
+        chr_mode = (self.control >> 4) & 0x01
+        if chr_mode == 0:
+            bank = (self.chr_bank0 & 0x1E) + (address // CHR_BANK_4KB_SIZE)
+        elif address < CHR_BANK_4KB_SIZE:
+            bank = self.chr_bank0
+        else:
+            bank = self.chr_bank1
+        return ((bank % chr_bank_count) * CHR_BANK_4KB_SIZE) + (address & 0x0FFF)
+
+    def write_cpu_address(self, address: int, value: int) -> None:
+        """Load MMC1's serial shift register and commit completed writes."""
+        if not 0x8000 <= address <= 0xFFFF:
+            raise CartridgeError(
+                f"CPU address 0x{address:04X} is outside PRG ROM range 0x8000-0xFFFF"
+            )
+        if value & 0x80:
+            self.shift_register = 0x10
+            self.control |= 0x0C
+            return
+
+        commit = bool(self.shift_register & 0x01)
+        self.shift_register = (self.shift_register >> 1) | ((value & 0x01) << 4)
+        if not commit:
+            return
+
+        register_value = self.shift_register & 0x1F
+        if 0x8000 <= address <= 0x9FFF:
+            self.control = register_value
+        elif 0xA000 <= address <= 0xBFFF:
+            self.chr_bank0 = register_value
+        elif 0xC000 <= address <= 0xDFFF:
+            self.chr_bank1 = register_value
+        else:
+            self.prg_bank = register_value
+        self.shift_register = 0x10
+
+
+@dataclass
 class Mapper2:
     """Mapper 2 / UxROM address mapping with a switchable lower PRG bank."""
 
@@ -128,7 +203,7 @@ class Cartridge:
     header: INESHeader
     prg_rom: bytes
     chr_data: bytearray
-    mapper: Mapper0 | Mapper2
+    mapper: Mapper0 | Mapper1 | Mapper2
 
     @property
     def mapper_number(self) -> int:
@@ -201,9 +276,18 @@ def load_ines_rom(data: bytes) -> Cartridge:
                 "Invalid Mapper 0 ROM: expected 1 or 2 PRG ROM banks, "
                 f"got {header.prg_rom_banks}. The ROM header may declare the wrong mapper."
             )
-        mapper: Mapper0 | Mapper2 = Mapper0(
+        mapper: Mapper0 | Mapper1 | Mapper2 = Mapper0(
             prg_rom_size=header.prg_rom_size,
             has_chr_ram=header.chr_rom_banks == 0,
+        )
+    elif header.mapper_number == 1:
+        if header.prg_rom_banks < 1:
+            raise CartridgeError(
+                f"Mapper 1 requires at least 1 PRG ROM bank, got {header.prg_rom_banks}"
+            )
+        mapper = Mapper1(
+            prg_rom_banks=header.prg_rom_banks,
+            chr_rom_banks=header.chr_rom_banks,
         )
     elif header.mapper_number == 2:
         if header.prg_rom_banks < 2:
@@ -213,7 +297,7 @@ def load_ines_rom(data: bytes) -> Cartridge:
         mapper = Mapper2(prg_rom_banks=header.prg_rom_banks)
     else:
         raise CartridgeError(
-            f"Unsupported mapper {header.mapper_number}; supported mappers: 0, 2"
+            f"Unsupported mapper {header.mapper_number}; supported mappers: 0, 1, 2"
         )
 
     prg_start = INES_HEADER_SIZE + (512 if header.has_trainer else 0)
