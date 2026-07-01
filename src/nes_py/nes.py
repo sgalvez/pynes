@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from pathlib import Path
 
 from .cartridge import Cartridge, load_ines_file, load_ines_rom
@@ -141,12 +142,19 @@ class NES:
         self.frame_cycles = self.ppu.cycle
         return cycles
 
-    def run(self, instruction_count: int) -> int:
+    def run(
+        self,
+        instruction_count: int,
+        *,
+        trace_callback: Callable[[CPU6502], None] | None = None,
+    ) -> int:
         """Execute a fixed number of CPU instructions and return CPU cycles."""
         if instruction_count < 0:
             raise ValueError("instruction_count must be non-negative")
 
         total = 0
         for _ in range(instruction_count):
+            if trace_callback is not None:
+                trace_callback(self.cpu)
             total += self.step()
         return total

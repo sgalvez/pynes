@@ -10,6 +10,7 @@ from .cartridge import (
 )
 from .input import Button, Controller
 from .cpu import CPU6502, CPUError, MemoryBus, StatusFlag
+from .debug import SmokeTestResult, disassemble_instruction, format_cpu_trace, run_smoke_test
 from .nes import NES, NESBus, NESBusError
 from .ppu import PPU, SCREEN_HEIGHT, SCREEN_WIDTH
 
@@ -31,8 +32,12 @@ __all__ = [
     "PPU",
     "SCREEN_HEIGHT",
     "SCREEN_WIDTH",
+    "SmokeTestResult",
     "StatusFlag",
     "__version__",
+    "disassemble_instruction",
+    "format_cpu_trace",
     "load_ines_file",
     "load_ines_rom",
+    "run_smoke_test",
 ]

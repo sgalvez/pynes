@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from .debug import make_trace_callback, open_trace_sink
 from .input import Button
 from .nes import NES
 from .ppu import SCREEN_HEIGHT, SCREEN_WIDTH
@@ -98,11 +99,21 @@ def run_desktop(
     *,
     scale: int = DEFAULT_SCALE,
     instructions_per_frame: int = DEFAULT_INSTRUCTIONS_PER_FRAME,
+    trace: bool = False,
+    disassemble: bool = False,
+    trace_file: str | Path | None = None,
     pygame_module=None,
 ) -> int:
     """Run the emulator in a pygame desktop window."""
     pygame = pygame_module if pygame_module is not None else load_pygame()
     pygame.init()
+    trace_sink = None
+    trace_handle = None
+    if trace:
+        trace_sink, trace_handle = open_trace_sink(trace_file)
+        trace_callback = make_trace_callback(trace_sink, include_disassembly=disassemble)
+    else:
+        trace_callback = None
     try:
         nes = NES.from_ines_file(rom_path)
         bindings = default_key_bindings(pygame)
@@ -132,7 +143,7 @@ def run_desktop(
                         nes.reset()
 
             if not paused:
-                nes.run(instructions_per_frame)
+                nes.run(instructions_per_frame, trace_callback=trace_callback)
                 nes.ppu.render_background()
 
             surface = pygame.image.frombuffer(
@@ -146,6 +157,8 @@ def run_desktop(
             pygame.display.flip()
             clock.tick(60)
     finally:
+        if trace_handle is not None:
+            trace_handle.close()
         pygame.quit()
 
     return 0
