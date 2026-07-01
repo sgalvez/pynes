@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 
-from . import __version__
 from .app import (
     DEFAULT_INSTRUCTIONS_PER_FRAME,
     DEFAULT_SCALE,
@@ -15,6 +14,7 @@ from .app import (
 from .cartridge import CartridgeError
 from .debug import open_trace_sink, run_smoke_test
 from .logging_config import configure_logging
+from .version import get_version
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version=f"%(prog)s {__version__}",
+        version=f"%(prog)s {get_version()}",
     )
     parser.add_argument(
         "-v",
