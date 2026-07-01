@@ -50,9 +50,9 @@ def test_invalid_magic_fails_with_clear_error() -> None:
 
 
 def test_unsupported_mapper_fails_with_clear_error() -> None:
-    rom = build_rom(flags6=0x10)
+    rom = build_rom(flags6=0x30)
 
-    with pytest.raises(CartridgeError, match="Unsupported mapper 1"):
+    with pytest.raises(CartridgeError, match="Unsupported mapper 3"):
         load_ines_rom(rom)
 
 
@@ -100,6 +100,51 @@ def test_chr_ram_is_allocated_when_rom_has_no_chr_banks() -> None:
     cartridge.write_chr(0x0000, 0x1FF)
 
     assert cartridge.read_chr(0x0000) == 0xFF
+
+
+def write_mapper1_register(cartridge, address: int, value: int) -> None:
+    for bit in range(5):
+        cartridge.write_prg(address, (value >> bit) & 0x01)
+
+
+def test_mapper1_switches_prg_bank_with_last_bank_fixed() -> None:
+    header = bytearray(16)
+    header[:4] = b"NES\x1a"
+    header[4] = 4
+    header[5] = 0
+    header[6] = 0x10
+    prg_rom = b"".join(bytes([bank]) * PRG_ROM_BANK_SIZE for bank in range(4))
+    cartridge = load_ines_rom(bytes(header) + prg_rom)
+
+    assert cartridge.mapper_number == 1
+    assert cartridge.read_prg(0x8000) == 0
+    assert cartridge.read_prg(0xC000) == 3
+
+    write_mapper1_register(cartridge, 0xE000, 2)
+
+    assert cartridge.read_prg(0x8000) == 2
+    assert cartridge.read_prg(0xBFFF) == 2
+    assert cartridge.read_prg(0xC000) == 3
+
+
+def test_mapper1_switches_4kb_chr_banks() -> None:
+    header = bytearray(16)
+    header[:4] = b"NES\x1a"
+    header[4] = 2
+    header[5] = 2
+    header[6] = 0x10
+    prg_rom = bytes(2 * PRG_ROM_BANK_SIZE)
+    chr_rom = b"".join(bytes([bank]) * (CHR_ROM_BANK_SIZE // 2) for bank in range(4))
+    cartridge = load_ines_rom(bytes(header) + prg_rom + chr_rom)
+
+    write_mapper1_register(cartridge, 0x8000, 0x1C)
+    write_mapper1_register(cartridge, 0xA000, 2)
+    write_mapper1_register(cartridge, 0xC000, 3)
+
+    assert cartridge.read_chr(0x0000) == 2
+    assert cartridge.read_chr(0x0FFF) == 2
+    assert cartridge.read_chr(0x1000) == 3
+    assert cartridge.read_chr(0x1FFF) == 3
 
 
 def test_mapper2_switches_lower_prg_bank_and_keeps_last_bank_fixed() -> None:
