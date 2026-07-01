@@ -9,6 +9,7 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+src/nes_py/_build_info.py
 develop-eggs/
 dist/
 downloads/

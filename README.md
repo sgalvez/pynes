@@ -143,6 +143,39 @@ dist/*.tar.gz
 dist/*.whl
 ```
 
+## Continuous Builds
+
+Every push to `main`, `develop`, `feature/**`, or `issue/**`, and every pull
+request, runs the continuous build workflow. The workflow validates the project,
+generates build metadata, stamps a unique development version, builds Python
+package artifacts, and uploads workflow artifacts.
+
+Continuous build versions use the base project version plus the GitHub Actions
+run number and commit SHA:
+
+```text
+Commit build version: 0.0.1.dev42+gabc1234
+Formal release version: 0.0.1
+Formal release tag: v0.0.1
+```
+
+Each continuous build uploads:
+
+- `python-package`: `dist/*.tar.gz` and `dist/*.whl`
+- `build-changelog`: `build/CHANGELOG.md`
+- `build-release-notes`: `build/RELEASE_NOTES.md`
+- `build-metadata`: `build/BUILD_INFO.json`
+
+The generated package metadata lets the CLI report the stamped build version:
+
+```bash
+python -m nes_py --version
+nes-py --version
+```
+
+Continuous build artifacts are downloadable from GitHub Actions workflow runs.
+They are not published to PyPI and do not create permanent GitHub Releases.
+
 ## Installing From A Release Artifact
 
 Download the wheel from a GitHub Release, then install it with:
@@ -176,6 +209,13 @@ runs tests and linting, builds the source distribution and wheel, creates or
 updates the GitHub Release, and uploads the package artifacts. This project does
 not publish to PyPI as part of the release workflow.
 
+The tag-based release workflow remains separate from continuous builds:
+
+```text
+Every commit -> CI validation + packaged workflow artifacts
+Version tag  -> formal GitHub Release
+```
+
 ## Project Layout
 
 ```text
@@ -186,10 +226,16 @@ not publish to PyPI as part of the release workflow.
 |-- .github/
 |   `-- workflows/
 |       |-- ci.yml
+|       |-- continuous-build.yml
 |       `-- release.yml
 |-- docs/
 |   `-- releases/
 |       `-- v0.0.1.md
+|-- scripts/
+|   |-- build_metadata.py
+|   |-- generate_build_metadata.py
+|   |-- generate_changelog.py
+|   `-- generate_release_notes.py
 |-- src/
 |   `-- nes_py/
 |       |-- __init__.py
