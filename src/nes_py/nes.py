@@ -1,10 +1,16 @@
+#!/usr/bin/env python3
 """NES system bus and execution loop."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
+import sys
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    __package__ = "nes_py"
 
 from .cartridge import Cartridge, load_ines_file, load_ines_rom
 from .cpu import CPU6502
@@ -158,3 +164,9 @@ class NES:
                 trace_callback(self.cpu)
             total += self.step()
         return total
+
+
+if __name__ == "__main__":
+    from .cli import main
+
+    raise SystemExit(main())
