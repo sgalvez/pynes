@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .cartridge import Cartridge, load_ines_file, load_ines_rom
 from .cpu import CPU6502
+from .input import Controller
 from .ppu import PPU
 
 INTERNAL_RAM_SIZE = 2 * 1024
@@ -32,6 +33,8 @@ class NESBus:
 
     cartridge: Cartridge
     ppu: PPU | None = None
+    controller1: Controller = field(default_factory=Controller)
+    controller2: Controller = field(default_factory=Controller)
     ram: bytearray = field(default_factory=lambda: bytearray(INTERNAL_RAM_SIZE))
     registers: HardwareRegisters = field(default_factory=HardwareRegisters)
     open_bus: int = 0
@@ -49,7 +52,12 @@ class NESBus:
             assert self.ppu is not None
             value = self.ppu.read_register(address - 0x2000)
         elif 0x4000 <= address <= 0x401F:
-            value = self.registers.apu_io[address - 0x4000]
+            if address == 0x4016:
+                value = self.controller1.read()
+            elif address == 0x4017:
+                value = self.controller2.read()
+            else:
+                value = self.registers.apu_io[address - 0x4000]
         elif 0x4020 <= address <= 0x7FFF:
             value = self.registers.expansion[address - 0x4020]
         elif 0x8000 <= address <= 0xFFFF:
@@ -72,6 +80,9 @@ class NESBus:
             assert self.ppu is not None
             self.ppu.write_register(address - 0x2000, value)
         elif 0x4000 <= address <= 0x401F:
+            if address == 0x4016:
+                self.controller1.write_strobe(value)
+                self.controller2.write_strobe(value)
             self.registers.apu_io[address - 0x4000] = value
         elif 0x4020 <= address <= 0x7FFF:
             self.registers.expansion[address - 0x4020] = value
@@ -89,13 +100,15 @@ class NES:
     bus: NESBus = field(init=False)
     cpu: CPU6502 = field(init=False)
     ppu: PPU = field(init=False)
+    controller1: Controller = field(default_factory=Controller)
+    controller2: Controller = field(default_factory=Controller)
     cpu_cycles: int = 0
     ppu_cycles: int = 0
     frame_cycles: int = 0
 
     def __post_init__(self) -> None:
         self.ppu = PPU(self.cartridge)
-        self.bus = NESBus(self.cartridge, self.ppu)
+        self.bus = NESBus(self.cartridge, self.ppu, self.controller1, self.controller2)
         self.cpu = CPU6502(self.bus)
         self.ppu.nmi_callback = self.cpu.nmi
         self.reset()

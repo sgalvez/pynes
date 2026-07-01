@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from nes_py.cartridge import CHR_ROM_BANK_SIZE, PRG_ROM_BANK_SIZE, load_ines_rom
+from nes_py.input import Button
 from nes_py.nes import INTERNAL_RAM_SIZE, NES, NESBus
 
 
@@ -43,8 +44,19 @@ def test_ppu_apu_controller_and_expansion_register_stubs_do_not_crash() -> None:
     assert bus.ppu.ctrl == 0x20
     assert bus.read(0x2002) == 0
     assert bus.read(0x4000) == 0x30
-    assert bus.read(0x4016) == 0x40
+    assert bus.read(0x4016) in (0, 1)
     assert bus.read(0x4020) == 0x50
+
+
+def test_controller_input_reaches_4016_serial_reads() -> None:
+    bus = NESBus(load_ines_rom(build_test_rom(b"\xEA")))
+    bus.controller1.set_button(Button.A, True)
+    bus.controller1.set_button(Button.START, True)
+
+    bus.write(0x4016, 1)
+    bus.write(0x4016, 0)
+
+    assert [bus.read(0x4016) for _ in range(10)] == [1, 0, 0, 1, 0, 0, 0, 0, 1, 1]
 
 
 def test_cartridge_prg_rom_reads_are_mapped_into_cpu_space() -> None:
