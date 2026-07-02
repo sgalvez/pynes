@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   release:
-    name: Build and publish GitHub Release
+    name: Build Python package and publish GitHub Release
     runs-on: ubuntu-latest
 
     steps:
@@ -50,3 +50,63 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.whl
+
+  standalone:
+    name: Build standalone ${{ matrix.label }} executable
+    needs: release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: Linux
+            executable-name: nes-py-linux-x86_64
+            executable-path: dist/standalone/nes-py-linux-x86_64
+          - os: windows-latest
+            label: Windows
+            executable-name: nes-py-windows-x86_64
+            executable-path: dist/standalone/nes-py-windows-x86_64.exe
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install standalone build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,standalone]"
+
+      - name: Run tests
+        run: python -m pytest
+
+      - name: Run lint
+        run: python -m ruff check .
+
+      - name: Build standalone executable
+        run: python scripts/build_standalone.py --name "${{ matrix.executable-name }}"
+
+      - name: Verify standalone executable on Linux
+        if: runner.os == 'Linux'
+        run: |
+          chmod +x "${{ matrix.executable-path }}"
+          "${{ matrix.executable-path }}" --help
+          "${{ matrix.executable-path }}" --version
+
+      - name: Verify standalone executable on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "${{ matrix.executable-path }}" --help
+          & "${{ matrix.executable-path }}" --version
+
+      - name: Upload standalone executable to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.executable-path }}

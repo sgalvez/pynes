@@ -28,6 +28,10 @@ dependencies = []
 display = [
   "pygame>=2.6",
 ]
+standalone = [
+  "pygame>=2.6",
+  "pyinstaller>=6.0",
+]
 dev = [
   "build>=1.2",
   "pygame>=2.6",
