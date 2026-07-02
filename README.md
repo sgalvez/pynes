@@ -190,7 +190,35 @@ They are not published to PyPI and do not create permanent GitHub Releases.
 
 ## Installing From A Release Artifact
 
-Download the wheel from a GitHub Release, then install it with:
+For the simplest path, download the standalone executable for your platform from
+the GitHub Release:
+
+```bash
+# Linux
+chmod +x ./nes-py-linux-x86_64
+./nes-py-linux-x86_64 --help
+./nes-py-linux-x86_64 path/to/game.nes
+```
+
+```powershell
+# Windows PowerShell
+.\nes-py-windows-x86_64.exe --help
+.\nes-py-windows-x86_64.exe path\to\game.nes
+```
+
+The standalone executable bundles Python and the project dependencies, so you do
+not need to clone the repository, create a virtual environment, or install the
+wheel manually.
+
+To build the standalone executable locally from a checkout:
+
+```bash
+python -m pip install -e ".[standalone]"
+python scripts/build_standalone.py
+```
+
+If you prefer installing the Python package, download the wheel from the GitHub
+Release, then install it with:
 
 ```bash
 python -m pip install nes_py-0.0.1-py3-none-any.whl
@@ -217,9 +245,10 @@ git push origin v0.0.1
 ```
 
 Pushing the tag triggers the release workflow. The workflow installs the project,
-runs tests and linting, builds the source distribution and wheel, creates or
-updates the GitHub Release, and uploads the package artifacts. This project does
-not publish to PyPI as part of the release workflow.
+runs tests and linting, builds the source distribution, wheel, and standalone
+Windows/Linux executables, creates or updates the GitHub Release, and uploads
+the package artifacts. This project does not publish to PyPI as part of the
+release workflow.
 
 The tag-based release workflow remains separate from continuous builds:
 
@@ -244,10 +273,12 @@ Version tag  -> formal GitHub Release
 |   `-- releases/
 |       `-- v0.0.1.md
 |-- scripts/
+|   |-- build_standalone.py
 |   |-- build_metadata.py
 |   |-- generate_build_metadata.py
 |   |-- generate_changelog.py
-|   `-- generate_release_notes.py
+|   |-- generate_release_notes.py
+|   `-- nes_py_launcher.py
 |-- src/
 |   `-- nes_py/
 |       |-- __init__.py
