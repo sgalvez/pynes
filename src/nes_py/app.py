@@ -17,6 +17,9 @@ from .settings import DEFAULT_SCALE
 TARGET_FRAME_SECONDS = 1 / 60
 SLOW_FRAME_THRESHOLD = TARGET_FRAME_SECONDS * 1.15
 MAX_AUTO_FRAME_SKIP = 2
+AUDIO_SAMPLE_RATE = 44_100
+AUDIO_BUFFER_SIZE = 2048
+AUDIO_ALLOWED_CHANGES = 0
 
 
 class DisplayUnavailableError(RuntimeError):
@@ -121,7 +124,15 @@ def run_desktop(
     """Run the emulator in a pygame desktop window."""
     pygame = pygame_module if pygame_module is not None else load_pygame()
     if pygame_module is None:
-        pygame.mixer.pre_init(frequency=44_100, size=-16, channels=1, buffer=1024)
+        # Lock SDL to the PCM format emitted by APU.generate_samples_into().
+        # Larger buffers reduce crackle when frames briefly take too long.
+        pygame.mixer.pre_init(
+            frequency=AUDIO_SAMPLE_RATE,
+            size=-16,
+            channels=1,
+            buffer=AUDIO_BUFFER_SIZE,
+            allowedchanges=AUDIO_ALLOWED_CHANGES,
+        )
     pygame.init()
     trace_sink = None
     trace_handle = None
