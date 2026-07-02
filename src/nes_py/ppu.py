@@ -220,7 +220,7 @@ class PPU:
             new_cycle -= PPU_CYCLES_PER_FRAME
             self.frame += 1
             self.status &= 0x7F
-            self.render_background()
+            self.render_frame()
             if new_cycle >= VBLANK_START_CYCLE:
                 self.enter_vblank()
 
@@ -233,11 +233,15 @@ class PPU:
         if not was_vblank and self.nmi_enabled:
             self._trigger_nmi()
 
+    def render_frame(self) -> list[RGB]:
+        """Render the current background and sprites into the framebuffer."""
+        self.render_background()
+        self.render_sprites()
+        return self.framebuffer
+
     def render_background(self) -> list[RGB]:
         """Render nametable 0 background tiles into the framebuffer."""
         pattern_base = 0x1000 if self.ctrl & 0x10 else 0x0000
-        framebuffer = self.framebuffer
-        framebuffer_bytes = self.framebuffer_bytes
         nametable = self.nametable
         palette = self.palette
         system_palette = SYSTEM_PALETTE
@@ -256,12 +260,46 @@ class PPU:
                         color_bits = ((high >> bit) & 0x01) << 1 | ((low >> bit) & 0x01)
                         palette_address = palette_base + color_bits
                         color_index = palette[palette_address] & 0x3F
-                        color = system_palette[color_index]
-                        framebuffer[pixel_offset + col] = color
-                        byte_offset = (pixel_offset + col) * 3
-                        framebuffer_bytes[byte_offset] = color[0]
-                        framebuffer_bytes[byte_offset + 1] = color[1]
-                        framebuffer_bytes[byte_offset + 2] = color[2]
+                        self._set_pixel(pixel_offset + col, system_palette[color_index])
+        return self.framebuffer
+
+    def render_sprites(self) -> list[RGB]:
+        """Render 8x8 sprites from OAM over the current background."""
+        if not self.mask & 0x10:
+            return self.framebuffer
+
+        pattern_base = 0x1000 if self.ctrl & 0x08 else 0x0000
+        for sprite_index in range(63, -1, -1):
+            offset = sprite_index * 4
+            sprite_y = self.oam[offset] + 1
+            tile_index = self.oam[offset + 1]
+            attributes = self.oam[offset + 2]
+            sprite_x = self.oam[offset + 3]
+            palette_base = 0x10 + (attributes & 0x03) * 4
+            flip_horizontal = bool(attributes & 0x40)
+            flip_vertical = bool(attributes & 0x80)
+            behind_background = bool(attributes & 0x20)
+
+            for row in range(8):
+                source_row = 7 - row if flip_vertical else row
+                low = self.cartridge.read_chr(pattern_base + tile_index * 16 + source_row)
+                high = self.cartridge.read_chr(pattern_base + tile_index * 16 + source_row + 8)
+                y = sprite_y + row
+                if y < 0 or y >= SCREEN_HEIGHT:
+                    continue
+                for col in range(8):
+                    source_col = col if flip_horizontal else 7 - col
+                    color_bits = ((high >> source_col) & 0x01) << 1 | ((low >> source_col) & 0x01)
+                    if color_bits == 0:
+                        continue
+                    x = sprite_x + col
+                    if x < 0 or x >= SCREEN_WIDTH:
+                        continue
+                    pixel_index = y * SCREEN_WIDTH + x
+                    if behind_background and self.framebuffer[pixel_index] != SYSTEM_PALETTE[self.palette[0] & 0x3F]:
+                        continue
+                    color_index = self.palette[palette_base + color_bits] & 0x3F
+                    self._set_pixel(pixel_index, SYSTEM_PALETTE[color_index])
         return self.framebuffer
 
     def _background_palette_base(self, tile_x: int, tile_y: int) -> int:
@@ -282,6 +320,13 @@ class PPU:
         if index in (0x10, 0x14, 0x18, 0x1C):
             index -= 0x10
         return index
+
+    def _set_pixel(self, pixel_index: int, color: RGB) -> None:
+        self.framebuffer[pixel_index] = color
+        byte_offset = pixel_index * 3
+        self.framebuffer_bytes[byte_offset] = color[0]
+        self.framebuffer_bytes[byte_offset + 1] = color[1]
+        self.framebuffer_bytes[byte_offset + 2] = color[2]
 
     def _trigger_nmi(self) -> None:
         if self.nmi_callback is not None:

@@ -117,8 +117,8 @@ the repository.
 
 - Mapper support is incomplete.
 - PPU behavior is incomplete and not cycle-accurate.
-- Background rendering is basic; sprite rendering is not implemented.
-- APU behavior is incomplete; only basic pulse-channel audio is implemented.
+- Background and sprite rendering are basic.
+- APU behavior is incomplete; pulse, triangle, and noise audio are approximate.
 - Input supports one keyboard-backed controller.
 
 ## Running Tests

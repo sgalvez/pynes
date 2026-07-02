@@ -60,6 +60,17 @@ def test_controller_input_reaches_4016_serial_reads() -> None:
     assert [bus.read(0x4016) for _ in range(10)] == [1, 0, 0, 1, 0, 0, 0, 0, 1, 1]
 
 
+def test_oam_dma_copies_cpu_page_to_ppu_oam() -> None:
+    bus = NESBus(load_ines_rom(build_test_rom(b"\xEA")))
+    for index in range(256):
+        bus.write(0x0200 + index, index)
+
+    bus.write(0x4014, 0x02)
+
+    assert bus.ppu is not None
+    assert bus.ppu.oam == bytearray(range(256))
+
+
 def test_cartridge_prg_rom_reads_are_mapped_into_cpu_space() -> None:
     bus = NESBus(load_ines_rom(build_test_rom(bytes([0xA9, 0x42]))))
 
