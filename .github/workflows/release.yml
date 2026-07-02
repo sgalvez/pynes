@@ -4,9 +4,24 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag to create or update, for example v0.0.1"
+        required: true
+        type: string
+      release_notes_path:
+        description: "Release notes file to use"
+        required: true
+        default: "docs/releases/v0.0.1.md"
+        type: string
 
 permissions:
   contents: write
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
+  RELEASE_NOTES_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.release_notes_path || format('docs/releases/{0}.md', github.ref_name) }}
 
 jobs:
   release:
@@ -46,7 +61,9 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          body_path: docs/releases/${{ github.ref_name }}.md
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          body_path: ${{ env.RELEASE_NOTES_PATH }}
           files: |
             dist/*.tar.gz
             dist/*.whl
@@ -109,4 +126,5 @@ jobs:
       - name: Upload standalone executable to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
           files: ${{ matrix.executable-path }}
