@@ -12,6 +12,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     __package__ = "nes_py"
 
+from .apu import APU
 from .cartridge import Cartridge, load_ines_file, load_ines_rom
 from .cpu import CPU6502
 from .input import Controller
@@ -19,7 +20,6 @@ from .ppu import PPU
 
 INTERNAL_RAM_SIZE = 2 * 1024
 PPU_REGISTER_COUNT = 8
-APU_IO_REGISTER_COUNT = 0x20
 
 
 class NESBusError(ValueError):
@@ -30,7 +30,6 @@ class NESBusError(ValueError):
 class HardwareRegisters:
     """Placeholder storage for hardware registers not implemented yet."""
 
-    apu_io: bytearray = field(default_factory=lambda: bytearray(APU_IO_REGISTER_COUNT))
     expansion: bytearray = field(default_factory=lambda: bytearray(0x4000))
 
 
@@ -40,6 +39,7 @@ class NESBus:
 
     cartridge: Cartridge
     ppu: PPU | None = None
+    apu: APU = field(default_factory=APU)
     controller1: Controller = field(default_factory=Controller)
     controller2: Controller = field(default_factory=Controller)
     ram: bytearray = field(default_factory=lambda: bytearray(INTERNAL_RAM_SIZE))
@@ -64,7 +64,7 @@ class NESBus:
             elif address == 0x4017:
                 value = self.controller2.read()
             else:
-                value = self.registers.apu_io[address - 0x4000]
+                value = self.apu.read_register(address)
         elif 0x4020 <= address <= 0x7FFF:
             value = self.registers.expansion[address - 0x4020]
         elif 0x8000 <= address <= 0xFFFF:
@@ -90,7 +90,8 @@ class NESBus:
             if address == 0x4016:
                 self.controller1.write_strobe(value)
                 self.controller2.write_strobe(value)
-            self.registers.apu_io[address - 0x4000] = value
+            else:
+                self.apu.write_register(address, value)
         elif 0x4020 <= address <= 0x7FFF:
             self.registers.expansion[address - 0x4020] = value
         elif 0x8000 <= address <= 0xFFFF:
@@ -107,6 +108,7 @@ class NES:
     bus: NESBus = field(init=False)
     cpu: CPU6502 = field(init=False)
     ppu: PPU = field(init=False)
+    apu: APU = field(init=False)
     controller1: Controller = field(default_factory=Controller)
     controller2: Controller = field(default_factory=Controller)
     cpu_cycles: int = 0
@@ -115,7 +117,8 @@ class NES:
 
     def __post_init__(self) -> None:
         self.ppu = PPU(self.cartridge)
-        self.bus = NESBus(self.cartridge, self.ppu, self.controller1, self.controller2)
+        self.apu = APU()
+        self.bus = NESBus(self.cartridge, self.ppu, self.apu, self.controller1, self.controller2)
         self.cpu = CPU6502(self.bus)
         self.ppu.nmi_callback = self.cpu.nmi
         self.reset()
@@ -133,6 +136,7 @@ class NES:
     def reset(self) -> None:
         """Reset CPU state and cycle counters."""
         self.ppu.reset()
+        self.apu.reset()
         self.cpu.reset()
         self.cpu_cycles = self.cpu.cycles
         self.ppu_cycles = self.cpu_cycles * 3
@@ -164,6 +168,34 @@ class NES:
                 trace_callback(self.cpu)
             total += self.step()
         return total
+
+    def run_frame(
+        self,
+        *,
+        trace_callback: Callable[[CPU6502], None] | None = None,
+        max_instructions: int = 20_000,
+    ) -> tuple[int, bytes]:
+        """Run until the PPU advances one frame and return cycles plus audio."""
+        if max_instructions <= 0:
+            raise ValueError("max_instructions must be positive")
+
+        start_frame = self.ppu.frame
+        total_cycles = 0
+        audio = bytearray()
+        instructions = 0
+        while self.ppu.frame == start_frame and instructions < max_instructions:
+            if trace_callback is not None:
+                trace_callback(self.cpu)
+            cycles = self.cpu.step()
+            self.cpu_cycles += cycles
+            audio.extend(self.apu.generate_samples(cycles))
+            ppu_cycles = cycles * 3
+            self.ppu.step(ppu_cycles)
+            self.ppu_cycles += ppu_cycles
+            self.frame_cycles = self.ppu.cycle
+            total_cycles += cycles
+            instructions += 1
+        return total_cycles, bytes(audio)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ from collections.abc import Sequence
 
 from .cartridge import CartridgeError
 from .logging_config import configure_logging
-from .settings import DEFAULT_INSTRUCTIONS_PER_FRAME, DEFAULT_SCALE
+from .settings import DEFAULT_SCALE
 from .version import get_version
 
 
@@ -57,8 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--instructions-per-frame",
         type=int,
-        default=DEFAULT_INSTRUCTIONS_PER_FRAME,
-        help="CPU instructions to execute before drawing each frame",
+        default=None,
+        help="CPU instructions to execute before drawing each frame; defaults to one emulated video frame",
     )
     parser.add_argument(
         "--trace",
