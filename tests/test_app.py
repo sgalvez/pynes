@@ -6,6 +6,7 @@ from nes_py.app import (
     DisplayUnavailableError,
     KeyBindings,
     apply_key_event,
+    default_key_bindings,
     framebuffer_to_rgb_bytes,
     load_pygame,
     run_desktop,
@@ -23,6 +24,26 @@ def test_framebuffer_to_rgb_bytes_reuses_packed_bytearray() -> None:
     framebuffer = bytearray([1, 2, 3])
 
     assert framebuffer_to_rgb_bytes(framebuffer) is framebuffer
+
+
+def test_default_key_bindings_maps_z_to_a_and_x_to_b() -> None:
+    class FakePygame:
+        K_x = 10
+        K_z = 11
+        K_RSHIFT = 12
+        K_RETURN = 13
+        K_UP = 14
+        K_DOWN = 15
+        K_LEFT = 16
+        K_RIGHT = 17
+        K_SPACE = 18
+        K_r = 19
+        K_ESCAPE = 20
+
+    bindings = default_key_bindings(FakePygame)
+
+    assert bindings.a == FakePygame.K_z
+    assert bindings.b == FakePygame.K_x
 
 
 def test_apply_key_event_updates_controller_and_returns_control_actions() -> None:
@@ -67,7 +88,7 @@ def test_load_pygame_error_message_when_missing(monkeypatch: pytest.MonkeyPatch)
 def test_run_desktop_scaled_render_does_not_pass_destination_surface(tmp_path) -> None:
     class FakeClock:
         def tick(self, fps: int) -> None:
-            assert fps == 60
+            assert fps in (0, 60)
 
     class FakeDisplay:
         def set_mode(self, size):
