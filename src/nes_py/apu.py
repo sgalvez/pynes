@@ -7,8 +7,11 @@ from dataclasses import dataclass, field
 CPU_CLOCK_HZ = 1_789_773
 DEFAULT_AUDIO_SAMPLE_RATE = 44_100
 APU_REGISTER_COUNT = 0x18
-AUDIO_LOW_PASS_ALPHA = 0.28
-AUDIO_OUTPUT_GAIN = 1.35
+# Conservative output shaping keeps the simple APU model from clipping into
+# brittle metallic peaks while preserving recognizable pulse/triangle melodies.
+AUDIO_LOW_PASS_ALPHA = 0.18
+AUDIO_OUTPUT_GAIN = 1.25
+NOISE_MIX_GAIN = 0.72
 NOISE_PERIODS: tuple[int, ...] = (
     4,
     8,
@@ -259,6 +262,7 @@ class APU:
             mixed -= self.dc_bias
             self.low_pass_sample += (mixed - self.low_pass_sample) * AUDIO_LOW_PASS_ALPHA
             mixed = self.low_pass_sample
+            mixed = self._soft_clip(mixed)
             value = int(max(-1.0, min(1.0, mixed)) * 32767)
             packed = value & 0xFFFF
             output.append(packed & 0xFF)
@@ -269,7 +273,11 @@ class APU:
         pulse_out = 0.0 if pulse_sum == 0 else 95.88 / ((8128 / pulse_sum) + 100)
 
         triangle = self.triangle.output(self.sample_rate)
-        noise = self.noise.output(self.cycles_per_sample)
+        noise = self.noise.output(self.cycles_per_sample) * NOISE_MIX_GAIN
         tnd_input = triangle / 8227 + noise / 12241
         tnd_out = 0.0 if tnd_input == 0 else 159.79 / ((1 / tnd_input) + 100)
         return (pulse_out + tnd_out) * AUDIO_OUTPUT_GAIN
+
+    def _soft_clip(self, sample: float) -> float:
+        """Round off sharp peaks before integer conversion."""
+        return sample / (1.0 + abs(sample))

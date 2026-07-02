@@ -151,6 +151,21 @@ def test_repeated_scroll_and_vram_writes_keep_background_cache_clean() -> None:
     assert not ppu.background_dirty
 
 
+def test_background_tile_row_cache_reuses_rows_across_redraws() -> None:
+    chr_data = bytearray(CHR_ROM_BANK_SIZE)
+    chr_data[0] = 0b1000_0000
+    ppu = PPU(load_ines_rom(build_rom(chr_data=bytes(chr_data))))
+    ppu.palette[1] = 0x02
+
+    ppu.render_background()
+    cache_size = len(ppu.tile_row_cache)
+    ppu.background_dirty = True
+    ppu.render_background()
+
+    assert cache_size > 0
+    assert len(ppu.tile_row_cache) == cache_size
+
+
 def test_sprite_rendering_draws_oam_sprite_over_background() -> None:
     chr_data = bytearray(CHR_ROM_BANK_SIZE)
     chr_data[16] = 0b1000_0000

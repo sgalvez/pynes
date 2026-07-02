@@ -15,7 +15,7 @@ the initial MVP.
 
 ## Release Status
 
-- Current version: `1.0.0`
+- Current version: `1.0.1`
 - Supported Python: Python 3.11+
 - Validated platforms:
   - Windows
@@ -169,9 +169,9 @@ Continuous build versions use the base project version plus the GitHub Actions
 run number and commit SHA:
 
 ```text
-Commit build version: 1.0.0.dev42+gabc1234
-Formal release version: 1.0.0
-Formal release tag: v1.0.0
+Commit build version: 1.0.1.dev42+gabc1234
+Formal release version: 1.0.1
+Formal release tag: v1.0.1
 ```
 
 Each continuous build uploads:
@@ -224,7 +224,7 @@ If you prefer installing the Python package, download the wheel from the GitHub
 Release, then install it with:
 
 ```bash
-python -m pip install pynes-1.0.0-py3-none-any.whl
+python -m pip install pynes-1.0.1-py3-none-any.whl
 ```
 
 Verify the installed CLI:
@@ -243,8 +243,8 @@ Maintainers create a GitHub Release by pushing a version tag:
 ```bash
 git checkout main
 git pull
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
 Maintainers can also run the release from GitHub:
@@ -253,7 +253,7 @@ Maintainers can also run the release from GitHub:
 Actions -> Release -> Run workflow
 ```
 
-Set `tag_name` to the release tag, for example `v1.0.0`, and keep
+Set `tag_name` to the release tag, for example `v1.0.1`, and keep
 `release_notes_path` pointed at the matching notes file.
 
 Pushing the tag or running the workflow manually triggers the release workflow.
@@ -288,7 +288,8 @@ Version tag  -> formal GitHub Release
 |       |-- index.md
 |       |-- v0.0.1.md
 |       |-- ...
-|       `-- v1.0.0.md
+|       |-- v1.0.0.md
+|       `-- v1.0.1.md
 |-- scripts/
 |   |-- build_standalone.py
 |   |-- build_metadata.py

@@ -49,6 +49,8 @@ def test_apu_output_filter_keeps_samples_bounded_and_resets() -> None:
     assert max(samples) < 32767
     assert min(samples) > -32768
     assert apu.low_pass_sample != 0.0
+    assert 0.0 < apu._soft_clip(0.5) < 0.5
+    assert -0.5 < apu._soft_clip(-0.5) < 0.0
 
     apu.reset()
 
