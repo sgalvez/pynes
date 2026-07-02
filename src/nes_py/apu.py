@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 CPU_CLOCK_HZ = 1_789_773
 DEFAULT_AUDIO_SAMPLE_RATE = 44_100
 APU_REGISTER_COUNT = 0x18
+QUARTER_FRAME_CYCLES = CPU_CLOCK_HZ / 240
+HALF_FRAME_CYCLES = CPU_CLOCK_HZ / 120
 # Conservative output shaping keeps the simple APU model from clipping into
 # brittle metallic peaks while preserving recognizable pulse/triangle melodies.
 AUDIO_LOW_PASS_ALPHA = 0.18
@@ -30,6 +32,40 @@ NOISE_PERIODS: tuple[int, ...] = (
     1016,
     2034,
     4068,
+)
+LENGTH_COUNTER_LOADS: tuple[int, ...] = (
+    10,
+    254,
+    20,
+    2,
+    40,
+    4,
+    80,
+    6,
+    160,
+    8,
+    60,
+    10,
+    14,
+    12,
+    26,
+    14,
+    12,
+    16,
+    24,
+    18,
+    48,
+    20,
+    96,
+    22,
+    192,
+    24,
+    72,
+    26,
+    16,
+    28,
+    32,
+    30,
 )
 
 
@@ -56,6 +92,10 @@ class PulseChannel:
     timer_high: int = 0
     enabled: bool = False
     phase: float = 0.0
+    length_counter: int = 0
+    envelope_start: bool = False
+    envelope_divider: int = 0
+    envelope_decay: int = 0
 
     @property
     def timer(self) -> int:
@@ -64,6 +104,14 @@ class PulseChannel:
     @property
     def volume(self) -> int:
         return self.control & 0x0F
+
+    @property
+    def envelope_loop(self) -> bool:
+        return bool(self.control & 0x20)
+
+    @property
+    def constant_volume(self) -> bool:
+        return bool(self.control & 0x10)
 
     @property
     def duty_cycle(self) -> float:
@@ -86,9 +134,12 @@ class PulseChannel:
         elif register == 3:
             self.timer_high = value
             self.phase = 0.0
+            self.length_counter = LENGTH_COUNTER_LOADS[(value >> 3) & 0x1F]
+            self.envelope_start = True
 
     def output(self, sample_rate: int) -> float:
-        if not self.enabled or self.volume == 0:
+        volume = self.current_volume
+        if not self.enabled or self.length_counter == 0 or volume == 0:
             return 0.0
 
         frequency = self.frequency
@@ -101,7 +152,33 @@ class PulseChannel:
         sample += poly_blep(self.phase, phase_step)
         sample -= poly_blep((self.phase - duty) % 1.0, phase_step)
         self.phase = (self.phase + phase_step) % 1.0
-        return self.volume * max(0.0, min(1.0, sample))
+        return volume * max(0.0, min(1.0, sample))
+
+    @property
+    def current_volume(self) -> int:
+        """Return constant or envelope-shaped volume for this pulse channel."""
+        return self.volume if self.constant_volume else self.envelope_decay
+
+    def clock_envelope(self) -> None:
+        """Clock the NES-style envelope decay unit on quarter-frame ticks."""
+        if self.envelope_start:
+            self.envelope_start = False
+            self.envelope_decay = 15
+            self.envelope_divider = self.volume
+            return
+        if self.envelope_divider > 0:
+            self.envelope_divider -= 1
+            return
+        self.envelope_divider = self.volume
+        if self.envelope_decay > 0:
+            self.envelope_decay -= 1
+        elif self.envelope_loop:
+            self.envelope_decay = 15
+
+    def clock_length_counter(self) -> None:
+        """Clock the length counter on half-frame ticks."""
+        if not self.envelope_loop and self.length_counter > 0:
+            self.length_counter -= 1
 
 
 @dataclass
@@ -113,6 +190,9 @@ class TriangleChannel:
     timer_high: int = 0
     enabled: bool = False
     phase: float = 0.0
+    length_counter: int = 0
+    linear_reload_value: int = 0
+    linear_reload: bool = False
 
     @property
     def timer(self) -> int:
@@ -125,17 +205,30 @@ class TriangleChannel:
             return 0.0
         return CPU_CLOCK_HZ / (32 * (timer + 1))
 
+    @property
+    def control_flag(self) -> bool:
+        return bool(self.linear_counter & 0x80)
+
+    @property
+    def linear_counter_value(self) -> int:
+        return self.linear_counter & 0x7F
+
     def write(self, register: int, value: int) -> None:
         if register == 0:
             self.linear_counter = value & 0x7F
+            self.linear_reload_value = value & 0x7F
+            if value & 0x80:
+                self.linear_counter |= 0x80
         elif register == 2:
             self.timer_low = value
         elif register == 3:
             self.timer_high = value
             self.phase = 0.0
+            self.length_counter = LENGTH_COUNTER_LOADS[(value >> 3) & 0x1F]
+            self.linear_reload = True
 
     def output(self, sample_rate: int) -> float:
-        if not self.enabled:
+        if not self.enabled or self.length_counter == 0 or self.linear_counter_value == 0:
             return 0.0
 
         frequency = self.frequency
@@ -144,6 +237,20 @@ class TriangleChannel:
 
         self.phase = (self.phase + frequency / sample_rate) % 1.0
         return 15.0 * (1.0 - abs(self.phase * 2.0 - 1.0))
+
+    def clock_linear_counter(self) -> None:
+        """Clock the triangle linear counter on quarter-frame ticks."""
+        if self.linear_reload:
+            self.linear_counter = (self.linear_counter & 0x80) | self.linear_reload_value
+        elif self.linear_counter_value > 0:
+            self.linear_counter = (self.linear_counter & 0x80) | (self.linear_counter_value - 1)
+        if not self.control_flag:
+            self.linear_reload = False
+
+    def clock_length_counter(self) -> None:
+        """Clock the length counter unless the triangle control flag halts it."""
+        if not self.control_flag and self.length_counter > 0:
+            self.length_counter -= 1
 
 
 @dataclass
@@ -157,10 +264,22 @@ class NoiseChannel:
     shift_register: int = 1
     cycles_since_shift: float = 0.0
     filtered_output: float = 0.0
+    length_counter: int = 0
+    envelope_start: bool = False
+    envelope_divider: int = 0
+    envelope_decay: int = 0
 
     @property
     def volume(self) -> int:
         return self.control & 0x0F
+
+    @property
+    def envelope_loop(self) -> bool:
+        return bool(self.control & 0x20)
+
+    @property
+    def constant_volume(self) -> bool:
+        return bool(self.control & 0x10)
 
     @property
     def period_cycles(self) -> int:
@@ -177,9 +296,12 @@ class NoiseChannel:
             self.period = value
         elif register == 3:
             self.length = value
+            self.length_counter = LENGTH_COUNTER_LOADS[(value >> 3) & 0x1F]
+            self.envelope_start = True
 
     def output(self, cycles_per_sample: float) -> float:
-        if not self.enabled or self.volume == 0:
+        volume = self.current_volume
+        if not self.enabled or self.length_counter == 0 or volume == 0:
             self.filtered_output += (0.0 - self.filtered_output) * NOISE_OUTPUT_ALPHA
             return self.filtered_output
 
@@ -190,9 +312,35 @@ class NoiseChannel:
             feedback = (self.shift_register & 0x01) ^ ((self.shift_register >> tap) & 0x01)
             self.shift_register = (self.shift_register >> 1) | (feedback << 14)
 
-        raw_output = 0.0 if self.shift_register & 0x01 else float(self.volume)
+        raw_output = 0.0 if self.shift_register & 0x01 else float(volume)
         self.filtered_output += (raw_output - self.filtered_output) * NOISE_OUTPUT_ALPHA
         return self.filtered_output
+
+    @property
+    def current_volume(self) -> int:
+        """Return constant or envelope-shaped volume for this noise channel."""
+        return self.volume if self.constant_volume else self.envelope_decay
+
+    def clock_envelope(self) -> None:
+        """Clock the NES-style envelope decay unit on quarter-frame ticks."""
+        if self.envelope_start:
+            self.envelope_start = False
+            self.envelope_decay = 15
+            self.envelope_divider = self.volume
+            return
+        if self.envelope_divider > 0:
+            self.envelope_divider -= 1
+            return
+        self.envelope_divider = self.volume
+        if self.envelope_decay > 0:
+            self.envelope_decay -= 1
+        elif self.envelope_loop:
+            self.envelope_decay = 15
+
+    def clock_length_counter(self) -> None:
+        """Clock the length counter on half-frame ticks."""
+        if not self.envelope_loop and self.length_counter > 0:
+            self.length_counter -= 1
 
 
 @dataclass
@@ -206,6 +354,8 @@ class APU:
     triangle: TriangleChannel = field(default_factory=TriangleChannel)
     noise: NoiseChannel = field(default_factory=NoiseChannel)
     cycles_since_sample: float = 0.0
+    cycles_since_quarter_frame: float = 0.0
+    cycles_since_half_frame: float = 0.0
     dc_bias: float = 0.0
     low_pass_sample: float = 0.0
 
@@ -220,6 +370,8 @@ class APU:
         self.triangle = TriangleChannel()
         self.noise = NoiseChannel()
         self.cycles_since_sample = 0.0
+        self.cycles_since_quarter_frame = 0.0
+        self.cycles_since_half_frame = 0.0
         self.dc_bias = 0.0
         self.low_pass_sample = 0.0
 
@@ -255,6 +407,14 @@ class APU:
             self.pulse2.enabled = bool(value & 0x02)
             self.triangle.enabled = bool(value & 0x04)
             self.noise.enabled = bool(value & 0x08)
+            if not self.pulse1.enabled:
+                self.pulse1.length_counter = 0
+            if not self.pulse2.enabled:
+                self.pulse2.length_counter = 0
+            if not self.triangle.enabled:
+                self.triangle.length_counter = 0
+            if not self.noise.enabled:
+                self.noise.length_counter = 0
 
     def generate_samples(self, cpu_cycles: int) -> bytes:
         """Generate little-endian signed 16-bit mono PCM for elapsed CPU cycles."""
@@ -271,6 +431,7 @@ class APU:
         self.cycles_since_sample += cpu_cycles
         while self.cycles_since_sample >= cycles_per_sample:
             self.cycles_since_sample -= cycles_per_sample
+            self._clock_frame_counter(cycles_per_sample)
             mixed = self._mixed_sample()
             self.dc_bias += (mixed - self.dc_bias) * 0.001
             mixed -= self.dc_bias
@@ -295,3 +456,21 @@ class APU:
     def _soft_clip(self, sample: float) -> float:
         """Round off sharp peaks before integer conversion."""
         return sample / (1.0 + abs(sample))
+
+    def _clock_frame_counter(self, cycles: float) -> None:
+        """Clock envelope, linear, and length units at approximate APU rates."""
+        self.cycles_since_quarter_frame += cycles
+        while self.cycles_since_quarter_frame >= QUARTER_FRAME_CYCLES:
+            self.cycles_since_quarter_frame -= QUARTER_FRAME_CYCLES
+            self.pulse1.clock_envelope()
+            self.pulse2.clock_envelope()
+            self.triangle.clock_linear_counter()
+            self.noise.clock_envelope()
+
+        self.cycles_since_half_frame += cycles
+        while self.cycles_since_half_frame >= HALF_FRAME_CYCLES:
+            self.cycles_since_half_frame -= HALF_FRAME_CYCLES
+            self.pulse1.clock_length_counter()
+            self.pulse2.clock_length_counter()
+            self.triangle.clock_length_counter()
+            self.noise.clock_length_counter()

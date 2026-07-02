@@ -8,6 +8,7 @@ file before the tag is pushed.
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| [v1.0.3](v1.0.3.md) | 2026-07-02 | Add APU music channel timing |
 | [v1.0.2](v1.0.2.md) | 2026-07-02 | Reduce metallic audio aliasing |
 | [v1.0.1](v1.0.1.md) | 2026-07-02 | Smooth overloaded frames and soften audio peaks |
 | [v1.0.0](v1.0.0.md) | 2026-07-02 | Playability and standalone release milestone |
