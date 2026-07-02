@@ -65,3 +65,16 @@ lightweight development guidance, not machine-independent guarantees.
 - The PPU and CI-script measurements vary enough at this scale that the slower
   after values are treated as non-actionable noise for this PR.
 - No emulator features were added.
+
+## Runtime Responsiveness
+
+The desktop runner now uses bounded adaptive frame skipping in normal frame-paced
+mode. When a rendered frame exceeds the 60 FPS frame budget by a small margin,
+the next one or two emulated frames may skip the expensive PPU render and pygame
+blit. CPU, PPU timing, input, and APU sample generation continue advancing, so
+the emulator catches up instead of compounding delays during scene transitions or
+busy gameplay.
+
+This behavior is intentionally disabled while tracing and when
+`--instructions-per-frame` is used, because those modes are for deterministic
+debugging and manual validation.

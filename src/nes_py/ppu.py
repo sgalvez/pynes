@@ -231,7 +231,7 @@ class PPU:
                 self.palette[index] = value
                 self.background_dirty = True
 
-    def step(self, cycles: int) -> None:
+    def step(self, cycles: int, *, render: bool = True) -> None:
         """Advance PPU timing by a number of PPU cycles."""
         if cycles <= 0:
             return
@@ -245,7 +245,8 @@ class PPU:
             new_cycle -= PPU_CYCLES_PER_FRAME
             self.frame += 1
             self.status &= 0x7F
-            self.render_frame()
+            if render:
+                self.render_frame()
             if new_cycle >= VBLANK_START_CYCLE:
                 self.enter_vblank()
 

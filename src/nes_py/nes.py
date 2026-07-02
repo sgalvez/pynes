@@ -179,6 +179,7 @@ class NES:
         *,
         trace_callback: Callable[[CPU6502], None] | None = None,
         max_instructions: int = 20_000,
+        render: bool = True,
     ) -> tuple[int, bytes]:
         """Run until the PPU advances one frame and return cycles plus audio."""
         if max_instructions <= 0:
@@ -198,7 +199,7 @@ class NES:
             self.cpu_cycles += cycles
             apu.generate_samples_into(cycles, audio)
             ppu_cycles = cycles * 3
-            ppu.step(ppu_cycles)
+            ppu.step(ppu_cycles, render=render)
             self.ppu_cycles += ppu_cycles
             self.frame_cycles = ppu.cycle
             total_cycles += cycles

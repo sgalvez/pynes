@@ -77,8 +77,8 @@ python -m pip install -e ".[display]"
 ## Controls
 
 - Arrow keys: D-pad
-- Z: B
-- X: A
+- Z: A
+- X: B
 - Right Shift: Select
 - Enter: Start
 - Space: Pause or resume
@@ -120,6 +120,9 @@ the repository.
 - Background and sprite rendering are basic.
 - APU behavior is incomplete; pulse, triangle, and noise audio are approximate.
 - Input supports one keyboard-backed controller.
+- The desktop runner uses bounded adaptive frame skipping during heavy scene
+  changes: it can skip rendering up to two frames while CPU and audio continue
+  advancing, which helps prevent overloaded gameplay from falling further behind.
 
 ## Running Tests
 

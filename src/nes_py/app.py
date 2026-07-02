@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+from time import perf_counter
 import warnings
 
 from .debug import make_trace_callback, open_trace_sink
@@ -12,6 +13,10 @@ from .input import Button
 from .nes import NES
 from .ppu import SCREEN_HEIGHT, SCREEN_WIDTH
 from .settings import DEFAULT_SCALE
+
+TARGET_FRAME_SECONDS = 1 / 60
+SLOW_FRAME_THRESHOLD = TARGET_FRAME_SECONDS * 1.15
+MAX_AUTO_FRAME_SKIP = 2
 
 
 class DisplayUnavailableError(RuntimeError):
@@ -56,8 +61,8 @@ def load_pygame():
 
 def default_key_bindings(pygame_module) -> KeyBindings:
     return KeyBindings(
-        a=pygame_module.K_x,
-        b=pygame_module.K_z,
+        a=pygame_module.K_z,
+        b=pygame_module.K_x,
         select=pygame_module.K_RSHIFT,
         start=pygame_module.K_RETURN,
         up=pygame_module.K_UP,
@@ -135,8 +140,11 @@ def run_desktop(
         audio_channel = pygame.mixer.Channel(0) if audio_enabled else None
         paused = False
         running = True
+        frames_to_skip = 0
 
         while running:
+            loop_started_at = perf_counter()
+            rendered_frame = True
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
@@ -157,11 +165,18 @@ def run_desktop(
 
             if not paused:
                 if instructions_per_frame is None:
-                    _, audio = nes.run_frame(trace_callback=trace_callback)
+                    rendered_frame = frames_to_skip == 0
+                    _, audio = nes.run_frame(
+                        trace_callback=trace_callback,
+                        render=rendered_frame,
+                    )
+                    if frames_to_skip:
+                        frames_to_skip -= 1
                 else:
                     cycles = nes.run(instructions_per_frame, trace_callback=trace_callback)
                     audio = nes.apu.generate_samples(cycles)
                     nes.ppu.render_frame()
+                    rendered_frame = True
                 if audio_enabled and audio:
                     assert audio_channel is not None
                     sound = pygame.mixer.Sound(buffer=audio)
@@ -171,16 +186,29 @@ def run_desktop(
                     else:
                         audio_channel.play(sound)
 
-            surface = pygame.image.frombuffer(
-                framebuffer_to_rgb_bytes(nes.ppu.framebuffer_bytes),
-                (SCREEN_WIDTH, SCREEN_HEIGHT),
-                "RGB",
-            )
-            if scale != 1:
-                surface = pygame.transform.scale(surface, (SCREEN_WIDTH * scale, SCREEN_HEIGHT * scale))
-            screen.blit(surface, (0, 0))
-            pygame.display.flip()
-            clock.tick(60)
+            if rendered_frame:
+                surface = pygame.image.frombuffer(
+                    framebuffer_to_rgb_bytes(nes.ppu.framebuffer_bytes),
+                    (SCREEN_WIDTH, SCREEN_HEIGHT),
+                    "RGB",
+                )
+                if scale != 1:
+                    surface = pygame.transform.scale(surface, (SCREEN_WIDTH * scale, SCREEN_HEIGHT * scale))
+                screen.blit(surface, (0, 0))
+                pygame.display.flip()
+
+            elapsed = perf_counter() - loop_started_at
+            if (
+                not paused
+                and rendered_frame
+                and instructions_per_frame is None
+                and trace_callback is None
+                and elapsed > SLOW_FRAME_THRESHOLD
+            ):
+                overrun_frames = int(elapsed / TARGET_FRAME_SECONDS)
+                frames_to_skip = max(frames_to_skip, min(MAX_AUTO_FRAME_SKIP, overrun_frames))
+
+            clock.tick(60 if rendered_frame else 0)
     finally:
         if trace_handle is not None:
             trace_handle.close()

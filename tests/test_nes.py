@@ -142,3 +142,18 @@ def test_nes_run_frame_advances_one_frame_and_returns_audio() -> None:
     assert cycles > 0
     assert nes.ppu.frame == 1
     assert len(audio) > 0
+
+
+def test_nes_run_frame_can_skip_ppu_render(monkeypatch: pytest.MonkeyPatch) -> None:
+    nes = NES.from_ines_rom(build_test_rom(b"\xEA"))
+
+    def fail_render() -> None:
+        raise AssertionError("render_frame should not be called")
+
+    monkeypatch.setattr(nes.ppu, "render_frame", fail_render)
+
+    cycles, audio = nes.run_frame(render=False)
+
+    assert cycles > 0
+    assert nes.ppu.frame == 1
+    assert isinstance(audio, bytes)
