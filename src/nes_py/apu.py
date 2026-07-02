@@ -237,19 +237,26 @@ class APU:
 
     def generate_samples(self, cpu_cycles: int) -> bytes:
         """Generate little-endian signed 16-bit mono PCM for elapsed CPU cycles."""
-        if cpu_cycles <= 0:
-            return b""
-
         output = bytearray()
+        self.generate_samples_into(cpu_cycles, output)
+        return bytes(output)
+
+    def generate_samples_into(self, cpu_cycles: int, output: bytearray) -> None:
+        """Append little-endian signed 16-bit mono PCM for elapsed CPU cycles."""
+        if cpu_cycles <= 0:
+            return
+
+        cycles_per_sample = self.cycles_per_sample
         self.cycles_since_sample += cpu_cycles
-        while self.cycles_since_sample >= self.cycles_per_sample:
-            self.cycles_since_sample -= self.cycles_per_sample
+        while self.cycles_since_sample >= cycles_per_sample:
+            self.cycles_since_sample -= cycles_per_sample
             mixed = self._mixed_sample()
             self.dc_bias += (mixed - self.dc_bias) * 0.001
             mixed -= self.dc_bias
             value = int(max(-1.0, min(1.0, mixed)) * 32767)
-            output.extend(value.to_bytes(2, byteorder="little", signed=True))
-        return bytes(output)
+            packed = value & 0xFFFF
+            output.append(packed & 0xFF)
+            output.append((packed >> 8) & 0xFF)
 
     def _mixed_sample(self) -> float:
         pulse_sum = self.pulse1.output(self.sample_rate) + self.pulse2.output(self.sample_rate)

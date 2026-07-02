@@ -188,16 +188,19 @@ class NES:
         total_cycles = 0
         audio = bytearray()
         instructions = 0
+        cpu = self.cpu
+        apu = self.apu
+        ppu = self.ppu
         while self.ppu.frame == start_frame and instructions < max_instructions:
             if trace_callback is not None:
-                trace_callback(self.cpu)
-            cycles = self.cpu.step()
+                trace_callback(cpu)
+            cycles = cpu.step()
             self.cpu_cycles += cycles
-            audio.extend(self.apu.generate_samples(cycles))
+            apu.generate_samples_into(cycles, audio)
             ppu_cycles = cycles * 3
-            self.ppu.step(ppu_cycles)
+            ppu.step(ppu_cycles)
             self.ppu_cycles += ppu_cycles
-            self.frame_cycles = self.ppu.cycle
+            self.frame_cycles = ppu.cycle
             total_cycles += cycles
             instructions += 1
         return total_cycles, bytes(audio)

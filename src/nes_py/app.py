@@ -96,10 +96,10 @@ def apply_key_event(nes: NES, key: int, pressed: bool, bindings: KeyBindings) ->
     return None
 
 
-def framebuffer_to_rgb_bytes(framebuffer: list[tuple[int, int, int]] | bytearray) -> bytes:
+def framebuffer_to_rgb_bytes(framebuffer: list[tuple[int, int, int]] | bytearray) -> bytes | bytearray:
     """Convert a framebuffer list to tightly packed RGB bytes."""
     if isinstance(framebuffer, bytearray):
-        return bytes(framebuffer)
+        return framebuffer
     return bytes(channel for pixel in framebuffer for channel in pixel)
 
 
@@ -131,6 +131,11 @@ def run_desktop(
         screen = pygame.display.set_mode((SCREEN_WIDTH * scale, SCREEN_HEIGHT * scale))
         pygame.display.set_caption(f"pynes - {Path(rom_path).name}")
         clock = pygame.time.Clock()
+        scaled_surface = (
+            pygame.Surface((SCREEN_WIDTH * scale, SCREEN_HEIGHT * scale))
+            if scale != 1
+            else None
+        )
         audio_enabled = pygame.mixer.get_init() is not None
         audio_channel = pygame.mixer.Channel(0) if audio_enabled else None
         paused = False
@@ -177,7 +182,11 @@ def run_desktop(
                 "RGB",
             )
             if scale != 1:
-                surface = pygame.transform.scale(surface, (SCREEN_WIDTH * scale, SCREEN_HEIGHT * scale))
+                surface = pygame.transform.scale(
+                    surface,
+                    (SCREEN_WIDTH * scale, SCREEN_HEIGHT * scale),
+                    scaled_surface,
+                )
             screen.blit(surface, (0, 0))
             pygame.display.flip()
             clock.tick(60)
