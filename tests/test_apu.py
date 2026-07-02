@@ -116,3 +116,20 @@ def test_apu_output_filter_keeps_samples_bounded_and_resets() -> None:
     apu.reset()
 
     assert apu.low_pass_sample == 0.0
+
+
+def test_apu_frame_counter_clocks_once_per_generation_chunk(
+    monkeypatch,
+) -> None:
+    apu = APU()
+    clocked_cycles: list[float] = []
+
+    def track_frame_counter(cycles: float) -> None:
+        clocked_cycles.append(cycles)
+
+    monkeypatch.setattr(apu, "_clock_frame_counter", track_frame_counter)
+
+    audio = apu.generate_samples(1_789_773 // 60)
+
+    assert audio
+    assert clocked_cycles == [1_789_773 // 60]

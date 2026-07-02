@@ -428,10 +428,12 @@ class APU:
             return
 
         cycles_per_sample = self.cycles_per_sample
+        # Frame units tick at low APU rates; doing this once per CPU chunk keeps
+        # music timing without adding work to every generated PCM sample.
+        self._clock_frame_counter(cpu_cycles)
         self.cycles_since_sample += cpu_cycles
         while self.cycles_since_sample >= cycles_per_sample:
             self.cycles_since_sample -= cycles_per_sample
-            self._clock_frame_counter(cycles_per_sample)
             mixed = self._mixed_sample()
             self.dc_bias += (mixed - self.dc_bias) * 0.001
             mixed -= self.dc_bias
