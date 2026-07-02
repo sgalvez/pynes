@@ -137,6 +137,20 @@ def test_render_frame_reuses_background_until_scroll_changes() -> None:
     assert ppu.framebuffer[0] == SYSTEM_PALETTE[0x03]
 
 
+def test_repeated_scroll_and_vram_writes_keep_background_cache_clean() -> None:
+    ppu = PPU(load_ines_rom(build_rom()))
+    ppu.write_register(5, 8)
+    ppu.write_register(5, 16)
+    ppu.render_frame()
+
+    ppu.write_register(5, 8)
+    ppu.write_register(5, 16)
+    ppu.write(0x2000, ppu.nametable[0])
+    ppu.write(0x3F00, ppu.palette[0])
+
+    assert not ppu.background_dirty
+
+
 def test_sprite_rendering_draws_oam_sprite_over_background() -> None:
     chr_data = bytearray(CHR_ROM_BANK_SIZE)
     chr_data[16] = 0b1000_0000

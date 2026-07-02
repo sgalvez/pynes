@@ -168,8 +168,10 @@ class PPU:
         register &= 0x07
         value &= 0xFF
         if register == 0:
+            old_ctrl = self.ctrl
             self.ctrl = value
-            self.background_dirty = True
+            if (old_ctrl ^ value) & 0x13:
+                self.background_dirty = True
             if self.vblank and self.nmi_enabled:
                 self._trigger_nmi()
         elif register == 1:
@@ -181,10 +183,15 @@ class PPU:
             self.oamaddr = (self.oamaddr + 1) & 0xFF
         elif register == 5:
             if self._scroll_latch_x:
+                old_scroll = self.scroll_x
                 self.scroll_x = value
+                if old_scroll != value:
+                    self.background_dirty = True
             else:
+                old_scroll = self.scroll_y
                 self.scroll_y = value
-            self.background_dirty = True
+                if old_scroll != value:
+                    self.background_dirty = True
             self._scroll_latch_x = not self._scroll_latch_x
         elif register == 6:
             if self._address_latch_high:
@@ -213,11 +220,16 @@ class PPU:
             self.cartridge.write_chr(address, value)
             self.background_dirty = True
         elif 0x2000 <= address <= 0x3EFF:
-            self.nametable[self._nametable_index(address)] = value
-            self.background_dirty = True
+            index = self._nametable_index(address)
+            if self.nametable[index] != value:
+                self.nametable[index] = value
+                self.background_dirty = True
         else:
-            self.palette[self._palette_index(address)] = value & 0x3F
-            self.background_dirty = True
+            index = self._palette_index(address)
+            value &= 0x3F
+            if self.palette[index] != value:
+                self.palette[index] = value
+                self.background_dirty = True
 
     def step(self, cycles: int) -> None:
         """Advance PPU timing by a number of PPU cycles."""
@@ -266,6 +278,7 @@ class PPU:
         coarse_scroll_y = self.scroll_y // 8
         fine_scroll_x = self.scroll_x & 0x07
         fine_scroll_y = self.scroll_y & 0x07
+        tile_row_cache: dict[tuple[int, int, int, int, int], tuple[list[RGB], bytes]] = {}
 
         for screen_tile_y in range(31):
             world_tile_y = (base_tile_y + coarse_scroll_y + screen_tile_y) % 60
@@ -284,6 +297,7 @@ class PPU:
                     tile_y=tile_y,
                     screen_x=screen_tile_x * 8 - fine_scroll_x,
                     screen_y=screen_y,
+                    tile_row_cache=tile_row_cache,
                 )
         self.background_framebuffer[:] = self.framebuffer
         self.background_framebuffer_bytes[:] = self.framebuffer_bytes
@@ -296,9 +310,17 @@ class PPU:
             return self.framebuffer
 
         pattern_base = 0x1000 if self.ctrl & 0x08 else 0x0000
+        framebuffer = self.framebuffer
+        framebuffer_bytes = self.framebuffer_bytes
+        palette = self.palette
+        system_palette = SYSTEM_PALETTE
+        universal_background = system_palette[palette[0] & 0x3F]
+        cartridge = self.cartridge
         for sprite_index in range(63, -1, -1):
             offset = sprite_index * 4
             sprite_y = self.oam[offset] + 1
+            if sprite_y >= SCREEN_HEIGHT:
+                continue
             tile_index = self.oam[offset + 1]
             attributes = self.oam[offset + 2]
             sprite_x = self.oam[offset + 3]
@@ -309,11 +331,15 @@ class PPU:
 
             for row in range(8):
                 source_row = 7 - row if flip_vertical else row
-                low = self.cartridge.read_chr(pattern_base + tile_index * 16 + source_row)
-                high = self.cartridge.read_chr(pattern_base + tile_index * 16 + source_row + 8)
                 y = sprite_y + row
-                if y < 0 or y >= SCREEN_HEIGHT:
+                if y >= SCREEN_HEIGHT:
                     continue
+                tile_address = pattern_base + tile_index * 16 + source_row
+                low = cartridge.read_chr(tile_address)
+                high = cartridge.read_chr(tile_address + 8)
+                if low == 0 and high == 0:
+                    continue
+                pixel_index = y * SCREEN_WIDTH + sprite_x
                 for col in range(8):
                     source_col = col if flip_horizontal else 7 - col
                     color_bits = ((high >> source_col) & 0x01) << 1 | ((low >> source_col) & 0x01)
@@ -322,11 +348,15 @@ class PPU:
                     x = sprite_x + col
                     if x < 0 or x >= SCREEN_WIDTH:
                         continue
-                    pixel_index = y * SCREEN_WIDTH + x
-                    if behind_background and self.framebuffer[pixel_index] != SYSTEM_PALETTE[self.palette[0] & 0x3F]:
+                    output_index = pixel_index + col
+                    if behind_background and framebuffer[output_index] != universal_background:
                         continue
-                    color_index = self.palette[palette_base + color_bits] & 0x3F
-                    self._set_pixel(pixel_index, SYSTEM_PALETTE[color_index])
+                    color = system_palette[palette[palette_base + color_bits] & 0x3F]
+                    framebuffer[output_index] = color
+                    byte_offset = output_index * 3
+                    framebuffer_bytes[byte_offset] = color[0]
+                    framebuffer_bytes[byte_offset + 1] = color[1]
+                    framebuffer_bytes[byte_offset + 2] = color[2]
         return self.framebuffer
 
     def _background_palette_base(self, nametable_base: int, tile_x: int, tile_y: int) -> int:
@@ -345,6 +375,7 @@ class PPU:
         tile_y: int,
         screen_x: int,
         screen_y: int,
+        tile_row_cache: dict[tuple[int, int, int, int, int], tuple[list[RGB], bytes]],
     ) -> None:
         tile_index = self.nametable[self._nametable_index(nametable_base + tile_y * 32 + tile_x)]
         palette_base = self._background_palette_base(nametable_base, tile_x, tile_y)
@@ -360,14 +391,33 @@ class PPU:
             low = cartridge.read_chr(pattern_base + tile_index * 16 + row)
             high = cartridge.read_chr(pattern_base + tile_index * 16 + row + 8)
             pixel_offset = y * SCREEN_WIDTH + screen_x
+            cache_key = (low, high, palette_base, palette[palette_base], palette[palette_base + 1] << 8 | palette[palette_base + 2] << 16 | palette[palette_base + 3] << 24)
+            cached_row = tile_row_cache.get(cache_key)
+            if cached_row is None:
+                row_colors: list[RGB] = []
+                row_bytes = bytearray(24)
+                for col in range(8):
+                    bit = 7 - col
+                    color_bits = ((high >> bit) & 0x01) << 1 | ((low >> bit) & 0x01)
+                    color = system_palette[palette[palette_base + color_bits] & 0x3F]
+                    row_colors.append(color)
+                    byte_offset = col * 3
+                    row_bytes[byte_offset] = color[0]
+                    row_bytes[byte_offset + 1] = color[1]
+                    row_bytes[byte_offset + 2] = color[2]
+                cached_row = (row_colors, bytes(row_bytes))
+                tile_row_cache[cache_key] = cached_row
+            if 0 <= screen_x <= SCREEN_WIDTH - 8:
+                framebuffer[pixel_offset : pixel_offset + 8] = cached_row[0]
+                byte_offset = pixel_offset * 3
+                framebuffer_bytes[byte_offset : byte_offset + 24] = cached_row[1]
+                continue
             for col in range(8):
                 x = screen_x + col
                 if x < 0 or x >= SCREEN_WIDTH:
                     continue
-                bit = 7 - col
-                color_bits = ((high >> bit) & 0x01) << 1 | ((low >> bit) & 0x01)
-                color = system_palette[palette[palette_base + color_bits] & 0x3F]
                 output_index = pixel_offset + col
+                color = cached_row[0][col]
                 framebuffer[output_index] = color
                 byte_offset = output_index * 3
                 framebuffer_bytes[byte_offset] = color[0]

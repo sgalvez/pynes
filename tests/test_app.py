@@ -12,6 +12,12 @@ def test_framebuffer_to_rgb_bytes_packs_pixels() -> None:
     assert framebuffer_to_rgb_bytes([(1, 2, 3), (4, 5, 6)]) == bytes([1, 2, 3, 4, 5, 6])
 
 
+def test_framebuffer_to_rgb_bytes_reuses_packed_bytearray() -> None:
+    framebuffer = bytearray([1, 2, 3])
+
+    assert framebuffer_to_rgb_bytes(framebuffer) is framebuffer
+
+
 def test_apply_key_event_updates_controller_and_returns_control_actions() -> None:
     nes = NES.from_ines_rom(build_test_rom(b"\xEA"))
     bindings = KeyBindings(
