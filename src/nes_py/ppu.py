@@ -108,6 +108,13 @@ class PPU:
     framebuffer_bytes: bytearray = field(
         default_factory=lambda: bytearray(FRAMEBUFFER_SIZE * 3)
     )
+    background_framebuffer: list[RGB] = field(
+        default_factory=lambda: [(0, 0, 0)] * FRAMEBUFFER_SIZE
+    )
+    background_framebuffer_bytes: bytearray = field(
+        default_factory=lambda: bytearray(FRAMEBUFFER_SIZE * 3)
+    )
+    background_dirty: bool = True
     vram_address: int = 0
     scroll_x: int = 0
     scroll_y: int = 0
@@ -129,6 +136,7 @@ class PPU:
         self._scroll_latch_x = True
         self.cycle = 0
         self.frame = 0
+        self.background_dirty = True
 
     @property
     def vblank(self) -> bool:
@@ -161,6 +169,7 @@ class PPU:
         value &= 0xFF
         if register == 0:
             self.ctrl = value
+            self.background_dirty = True
             if self.vblank and self.nmi_enabled:
                 self._trigger_nmi()
         elif register == 1:
@@ -175,6 +184,7 @@ class PPU:
                 self.scroll_x = value
             else:
                 self.scroll_y = value
+            self.background_dirty = True
             self._scroll_latch_x = not self._scroll_latch_x
         elif register == 6:
             if self._address_latch_high:
@@ -201,10 +211,13 @@ class PPU:
         value &= 0xFF
         if 0x0000 <= address <= 0x1FFF:
             self.cartridge.write_chr(address, value)
+            self.background_dirty = True
         elif 0x2000 <= address <= 0x3EFF:
             self.nametable[self._nametable_index(address)] = value
+            self.background_dirty = True
         else:
             self.palette[self._palette_index(address)] = value & 0x3F
+            self.background_dirty = True
 
     def step(self, cycles: int) -> None:
         """Advance PPU timing by a number of PPU cycles."""
@@ -235,43 +248,46 @@ class PPU:
 
     def render_frame(self) -> list[RGB]:
         """Render the current background and sprites into the framebuffer."""
-        self.render_background()
+        if self.background_dirty:
+            self.render_background()
+        else:
+            self.framebuffer[:] = self.background_framebuffer
+            self.framebuffer_bytes[:] = self.background_framebuffer_bytes
         self.render_sprites()
         return self.framebuffer
 
     def render_background(self) -> list[RGB]:
         """Render the scroll-selected background into the framebuffer."""
         pattern_base = 0x1000 if self.ctrl & 0x10 else 0x0000
-        palette = self.palette
-        system_palette = SYSTEM_PALETTE
-        cartridge = self.cartridge
         base_nametable = self.ctrl & 0x03
-        base_x = (base_nametable & 0x01) * SCREEN_WIDTH
-        base_y = ((base_nametable >> 1) & 0x01) * SCREEN_HEIGHT
+        base_tile_x = (base_nametable & 0x01) * 32
+        base_tile_y = ((base_nametable >> 1) & 0x01) * 30
+        coarse_scroll_x = self.scroll_x // 8
+        coarse_scroll_y = self.scroll_y // 8
+        fine_scroll_x = self.scroll_x & 0x07
+        fine_scroll_y = self.scroll_y & 0x07
 
-        for y in range(SCREEN_HEIGHT):
-            world_y = (base_y + self.scroll_y + y) % (SCREEN_HEIGHT * 2)
-            nametable_y = world_y // SCREEN_HEIGHT
-            tile_y = (world_y % SCREEN_HEIGHT) // 8
-            fine_y = world_y & 0x07
-            pixel_offset = y * SCREEN_WIDTH
-            for x in range(SCREEN_WIDTH):
-                world_x = (base_x + self.scroll_x + x) % (SCREEN_WIDTH * 2)
-                nametable_x = world_x // SCREEN_WIDTH
-                tile_x = (world_x % SCREEN_WIDTH) // 8
-                fine_x = world_x & 0x07
-                nametable_id = nametable_y * 2 + nametable_x
-                nametable_base = 0x2000 + nametable_id * 0x0400
-                tile_index = self.nametable[
-                    self._nametable_index(nametable_base + tile_y * 32 + tile_x)
-                ]
-                low = cartridge.read_chr(pattern_base + tile_index * 16 + fine_y)
-                high = cartridge.read_chr(pattern_base + tile_index * 16 + fine_y + 8)
-                bit = 7 - fine_x
-                color_bits = ((high >> bit) & 0x01) << 1 | ((low >> bit) & 0x01)
-                palette_base = self._background_palette_base(nametable_base, tile_x, tile_y)
-                color_index = palette[palette_base + color_bits] & 0x3F
-                self._set_pixel(pixel_offset + x, system_palette[color_index])
+        for screen_tile_y in range(31):
+            world_tile_y = (base_tile_y + coarse_scroll_y + screen_tile_y) % 60
+            nametable_y = world_tile_y // 30
+            tile_y = world_tile_y % 30
+            screen_y = screen_tile_y * 8 - fine_scroll_y
+            for screen_tile_x in range(33):
+                world_tile_x = (base_tile_x + coarse_scroll_x + screen_tile_x) % 64
+                nametable_x = world_tile_x // 32
+                tile_x = world_tile_x % 32
+                nametable_base = 0x2000 + (nametable_y * 2 + nametable_x) * 0x0400
+                self._render_background_tile(
+                    pattern_base=pattern_base,
+                    nametable_base=nametable_base,
+                    tile_x=tile_x,
+                    tile_y=tile_y,
+                    screen_x=screen_tile_x * 8 - fine_scroll_x,
+                    screen_y=screen_y,
+                )
+        self.background_framebuffer[:] = self.framebuffer
+        self.background_framebuffer_bytes[:] = self.framebuffer_bytes
+        self.background_dirty = False
         return self.framebuffer
 
     def render_sprites(self) -> list[RGB]:
@@ -319,6 +335,44 @@ class PPU:
         shift = ((tile_y % 4) // 2) * 4 + ((tile_x % 4) // 2) * 2
         palette_number = (attribute >> shift) & 0x03
         return palette_number * 4
+
+    def _render_background_tile(
+        self,
+        *,
+        pattern_base: int,
+        nametable_base: int,
+        tile_x: int,
+        tile_y: int,
+        screen_x: int,
+        screen_y: int,
+    ) -> None:
+        tile_index = self.nametable[self._nametable_index(nametable_base + tile_y * 32 + tile_x)]
+        palette_base = self._background_palette_base(nametable_base, tile_x, tile_y)
+        framebuffer = self.framebuffer
+        framebuffer_bytes = self.framebuffer_bytes
+        palette = self.palette
+        system_palette = SYSTEM_PALETTE
+        cartridge = self.cartridge
+        for row in range(8):
+            y = screen_y + row
+            if y < 0 or y >= SCREEN_HEIGHT:
+                continue
+            low = cartridge.read_chr(pattern_base + tile_index * 16 + row)
+            high = cartridge.read_chr(pattern_base + tile_index * 16 + row + 8)
+            pixel_offset = y * SCREEN_WIDTH + screen_x
+            for col in range(8):
+                x = screen_x + col
+                if x < 0 or x >= SCREEN_WIDTH:
+                    continue
+                bit = 7 - col
+                color_bits = ((high >> bit) & 0x01) << 1 | ((low >> bit) & 0x01)
+                color = system_palette[palette[palette_base + color_bits] & 0x3F]
+                output_index = pixel_offset + col
+                framebuffer[output_index] = color
+                byte_offset = output_index * 3
+                framebuffer_bytes[byte_offset] = color[0]
+                framebuffer_bytes[byte_offset + 1] = color[1]
+                framebuffer_bytes[byte_offset + 2] = color[2]
 
     def _vram_increment(self) -> int:
         return 32 if self.ctrl & 0x04 else 1

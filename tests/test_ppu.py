@@ -115,6 +115,28 @@ def test_background_rendering_uses_scroll_offsets() -> None:
     assert ppu.framebuffer[0] == SYSTEM_PALETTE[0x03]
 
 
+def test_render_frame_reuses_background_until_scroll_changes() -> None:
+    chr_data = bytearray(CHR_ROM_BANK_SIZE)
+    chr_data[0] = 0b1000_0000
+    chr_data[16 + 8] = 0b1000_0000
+    ppu = PPU(load_ines_rom(build_rom(chr_data=bytes(chr_data))))
+    ppu.nametable[0] = 0
+    ppu.nametable[1] = 1
+    ppu.palette[1] = 0x02
+    ppu.palette[2] = 0x03
+
+    ppu.render_frame()
+    assert not ppu.background_dirty
+    assert ppu.framebuffer[0] == SYSTEM_PALETTE[0x02]
+
+    ppu.write_register(5, 8)
+    assert ppu.background_dirty
+    ppu.render_frame()
+
+    assert not ppu.background_dirty
+    assert ppu.framebuffer[0] == SYSTEM_PALETTE[0x03]
+
+
 def test_sprite_rendering_draws_oam_sprite_over_background() -> None:
     chr_data = bytearray(CHR_ROM_BANK_SIZE)
     chr_data[16] = 0b1000_0000

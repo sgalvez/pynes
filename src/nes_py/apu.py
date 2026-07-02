@@ -188,7 +188,6 @@ class APU:
     noise: NoiseChannel = field(default_factory=NoiseChannel)
     cycles_since_sample: float = 0.0
     dc_bias: float = 0.0
-    low_pass_output: float = 0.0
 
     @property
     def cycles_per_sample(self) -> float:
@@ -202,7 +201,6 @@ class APU:
         self.noise = NoiseChannel()
         self.cycles_since_sample = 0.0
         self.dc_bias = 0.0
-        self.low_pass_output = 0.0
 
     def read_register(self, address: int) -> int:
         address &= 0xFFFF
@@ -249,8 +247,6 @@ class APU:
             mixed = self._mixed_sample()
             self.dc_bias += (mixed - self.dc_bias) * 0.001
             mixed -= self.dc_bias
-            self.low_pass_output += (mixed - self.low_pass_output) * 0.45
-            mixed = self.low_pass_output
             value = int(max(-1.0, min(1.0, mixed)) * 32767)
             output.extend(value.to_bytes(2, byteorder="little", signed=True))
         return bytes(output)
