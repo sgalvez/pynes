@@ -11,7 +11,7 @@ from .debug import make_trace_callback, open_trace_sink
 from .input import Button
 from .nes import NES
 from .ppu import SCREEN_HEIGHT, SCREEN_WIDTH
-from .settings import DEFAULT_INSTRUCTIONS_PER_FRAME, DEFAULT_SCALE
+from .settings import DEFAULT_SCALE
 
 
 class DisplayUnavailableError(RuntimeError):
@@ -96,8 +96,10 @@ def apply_key_event(nes: NES, key: int, pressed: bool, bindings: KeyBindings) ->
     return None
 
 
-def framebuffer_to_rgb_bytes(framebuffer: list[tuple[int, int, int]]) -> bytes:
+def framebuffer_to_rgb_bytes(framebuffer: list[tuple[int, int, int]] | bytearray) -> bytes:
     """Convert a framebuffer list to tightly packed RGB bytes."""
+    if isinstance(framebuffer, bytearray):
+        return bytes(framebuffer)
     return bytes(channel for pixel in framebuffer for channel in pixel)
 
 
@@ -105,7 +107,7 @@ def run_desktop(
     rom_path: str | Path,
     *,
     scale: int = DEFAULT_SCALE,
-    instructions_per_frame: int = DEFAULT_INSTRUCTIONS_PER_FRAME,
+    instructions_per_frame: int | None = None,
     trace: bool = False,
     disassemble: bool = False,
     trace_file: str | Path | None = None,
@@ -113,6 +115,8 @@ def run_desktop(
 ) -> int:
     """Run the emulator in a pygame desktop window."""
     pygame = pygame_module if pygame_module is not None else load_pygame()
+    if pygame_module is None:
+        pygame.mixer.pre_init(frequency=44_100, size=-16, channels=1, buffer=1024)
     pygame.init()
     trace_sink = None
     trace_handle = None
@@ -127,6 +131,8 @@ def run_desktop(
         screen = pygame.display.set_mode((SCREEN_WIDTH * scale, SCREEN_HEIGHT * scale))
         pygame.display.set_caption(f"pynes - {Path(rom_path).name}")
         clock = pygame.time.Clock()
+        audio_enabled = pygame.mixer.get_init() is not None
+        audio_channel = pygame.mixer.Channel(0) if audio_enabled else None
         paused = False
         running = True
 
@@ -150,11 +156,23 @@ def run_desktop(
                         nes.reset()
 
             if not paused:
-                nes.run(instructions_per_frame, trace_callback=trace_callback)
-                nes.ppu.render_background()
+                if instructions_per_frame is None:
+                    _, audio = nes.run_frame(trace_callback=trace_callback)
+                else:
+                    cycles = nes.run(instructions_per_frame, trace_callback=trace_callback)
+                    audio = nes.apu.generate_samples(cycles)
+                    nes.ppu.render_background()
+                if audio_enabled and audio:
+                    assert audio_channel is not None
+                    sound = pygame.mixer.Sound(buffer=audio)
+                    if audio_channel.get_busy():
+                        if audio_channel.get_queue() is None:
+                            audio_channel.queue(sound)
+                    else:
+                        audio_channel.play(sound)
 
             surface = pygame.image.frombuffer(
-                framebuffer_to_rgb_bytes(nes.ppu.framebuffer),
+                framebuffer_to_rgb_bytes(nes.ppu.framebuffer_bytes),
                 (SCREEN_WIDTH, SCREEN_HEIGHT),
                 "RGB",
             )

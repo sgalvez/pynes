@@ -44,6 +44,7 @@ def test_ppu_apu_controller_and_expansion_register_stubs_do_not_crash() -> None:
     assert bus.ppu.ctrl == 0x20
     assert bus.read(0x2002) == 0
     assert bus.read(0x4000) == 0x30
+    assert bus.apu.registers[0] == 0x30
     assert bus.read(0x4016) in (0, 1)
     assert bus.read(0x4020) == 0x50
 
@@ -116,3 +117,17 @@ def test_nes_run_rejects_negative_instruction_counts() -> None:
 
     with pytest.raises(ValueError, match="non-negative"):
         nes.run(-1)
+
+
+def test_nes_run_frame_advances_one_frame_and_returns_audio() -> None:
+    nes = NES.from_ines_rom(build_test_rom(b"\xEA"))
+    nes.bus.write(0x4000, 0xBF)
+    nes.bus.write(0x4002, 0xFF)
+    nes.bus.write(0x4003, 0x00)
+    nes.bus.write(0x4015, 0x01)
+
+    cycles, audio = nes.run_frame()
+
+    assert cycles > 0
+    assert nes.ppu.frame == 1
+    assert len(audio) > 0

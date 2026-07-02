@@ -93,6 +93,7 @@ def test_background_rendering_uses_chr_tiles_nametable_attributes_and_palette() 
     assert framebuffer[0] == SYSTEM_PALETTE[0x02]
     assert framebuffer[1] == SYSTEM_PALETTE[0x01]
     assert framebuffer[SCREEN_WIDTH + 1] == SYSTEM_PALETTE[0x03]
+    assert ppu.framebuffer_bytes[:6] == bytes((*SYSTEM_PALETTE[0x02], *SYSTEM_PALETTE[0x01]))
 
 
 def test_vblank_status_read_clears_flag_and_nmi_callback_runs_once() -> None:

@@ -37,13 +37,13 @@ def test_cli_default_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_cli_runs_desktop_with_rom_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[tuple[str, int, int, bool, bool, str | None]] = []
+    calls: list[tuple[str, int, int | None, bool, bool, str | None]] = []
 
     def fake_run_desktop(
         rom: str,
         *,
         scale: int,
-        instructions_per_frame: int,
+        instructions_per_frame: int | None,
         trace: bool,
         disassemble: bool,
         trace_file: str | None,
@@ -55,6 +55,27 @@ def test_cli_runs_desktop_with_rom_path(monkeypatch: pytest.MonkeyPatch) -> None
 
     assert main(["game.nes", "--scale", "2", "--instructions-per-frame", "123"]) == 0
     assert calls == [("game.nes", 2, 123, False, False, None)]
+
+
+def test_cli_uses_automatic_frame_pacing_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[int | None] = []
+
+    def fake_run_desktop(
+        rom: str,
+        *,
+        scale: int,
+        instructions_per_frame: int | None,
+        trace: bool,
+        disassemble: bool,
+        trace_file: str | None,
+    ) -> int:
+        calls.append(instructions_per_frame)
+        return 0
+
+    monkeypatch.setattr(nes_py.cli, "run_desktop", fake_run_desktop)
+
+    assert main(["game.nes"]) == 0
+    assert calls == [None]
 
 
 def test_cli_smoke_test_mode(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
