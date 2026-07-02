@@ -279,8 +279,13 @@ Version tag  -> formal GitHub Release
 |       |-- continuous-build.yml
 |       `-- release.yml
 |-- docs/
+|   |-- performance/
+|   |   `-- performance-report.md
 |   `-- releases/
-|       `-- v0.0.1.md
+|       |-- index.md
+|       |-- v0.0.1.md
+|       |-- ...
+|       `-- v0.0.7.md
 |-- scripts/
 |   |-- build_standalone.py
 |   |-- build_metadata.py
@@ -307,8 +312,13 @@ Version tag  -> formal GitHub Release
     |-- test_cartridge.py
     |-- test_cli.py
     |-- test_cpu.py
+    |-- test_debug.py
+    |-- test_direct_script.py
     |-- test_nes.py
-    `-- test_ppu.py
+    |-- test_ppu.py
+    |-- test_release_docs.py
+    |-- test_standalone_build.py
+    `-- test_version.py
 ```
 
 ## License
