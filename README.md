@@ -244,11 +244,20 @@ git tag v0.0.1
 git push origin v0.0.1
 ```
 
-Pushing the tag triggers the release workflow. The workflow installs the project,
-runs tests and linting, builds the source distribution, wheel, and standalone
-Windows/Linux executables, creates or updates the GitHub Release, and uploads
-the package artifacts. This project does not publish to PyPI as part of the
-release workflow.
+Maintainers can also run the release from GitHub:
+
+```text
+Actions -> Release -> Run workflow
+```
+
+Set `tag_name` to the release tag, for example `v0.0.1`, and keep
+`release_notes_path` pointed at the matching notes file.
+
+Pushing the tag or running the workflow manually triggers the release workflow.
+The workflow installs the project, runs tests and linting, builds the source
+distribution, wheel, and standalone Windows/Linux executables, creates or
+updates the GitHub Release, and uploads the package artifacts. This project does
+not publish to PyPI as part of the release workflow.
 
 The tag-based release workflow remains separate from continuous builds:
 
