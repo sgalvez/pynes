@@ -11,7 +11,8 @@ APU_REGISTER_COUNT = 0x18
 # brittle metallic peaks while preserving recognizable pulse/triangle melodies.
 AUDIO_LOW_PASS_ALPHA = 0.18
 AUDIO_OUTPUT_GAIN = 1.25
-NOISE_MIX_GAIN = 0.72
+NOISE_MIX_GAIN = 0.58
+NOISE_OUTPUT_ALPHA = 0.16
 NOISE_PERIODS: tuple[int, ...] = (
     4,
     8,
@@ -31,12 +32,18 @@ NOISE_PERIODS: tuple[int, ...] = (
     4068,
 )
 
-PULSE_DUTY_PATTERNS: tuple[tuple[int, ...], ...] = (
-    (0, 1, 0, 0, 0, 0, 0, 0),
-    (0, 1, 1, 0, 0, 0, 0, 0),
-    (0, 1, 1, 1, 1, 0, 0, 0),
-    (1, 0, 0, 1, 1, 1, 1, 1),
-)
+
+def poly_blep(phase: float, phase_step: float) -> float:
+    """Return a compact band-limited edge correction for pulse transitions."""
+    if phase_step <= 0.0:
+        return 0.0
+    if phase < phase_step:
+        t = phase / phase_step
+        return t + t - t * t - 1.0
+    if phase > 1.0 - phase_step:
+        t = (phase - 1.0) / phase_step
+        return t * t + t + t + 1.0
+    return 0.0
 
 
 @dataclass
@@ -59,8 +66,8 @@ class PulseChannel:
         return self.control & 0x0F
 
     @property
-    def duty_pattern(self) -> tuple[int, ...]:
-        return PULSE_DUTY_PATTERNS[(self.control >> 6) & 0x03]
+    def duty_cycle(self) -> float:
+        return (1, 2, 4, 6)[(self.control >> 6) & 0x03] / 8
 
     @property
     def frequency(self) -> float:
@@ -80,17 +87,21 @@ class PulseChannel:
             self.timer_high = value
             self.phase = 0.0
 
-    def output(self, sample_rate: int) -> int:
+    def output(self, sample_rate: int) -> float:
         if not self.enabled or self.volume == 0:
-            return 0
+            return 0.0
 
         frequency = self.frequency
         if frequency <= 0.0 or frequency >= sample_rate / 2:
-            return 0
+            return 0.0
 
-        self.phase = (self.phase + frequency / sample_rate) % 1.0
-        duty_index = int(self.phase * 8) & 0x07
-        return self.volume if self.duty_pattern[duty_index] else 0
+        phase_step = frequency / sample_rate
+        duty = self.duty_cycle
+        sample = 1.0 if self.phase < duty else 0.0
+        sample += poly_blep(self.phase, phase_step)
+        sample -= poly_blep((self.phase - duty) % 1.0, phase_step)
+        self.phase = (self.phase + phase_step) % 1.0
+        return self.volume * max(0.0, min(1.0, sample))
 
 
 @dataclass
@@ -123,17 +134,16 @@ class TriangleChannel:
             self.timer_high = value
             self.phase = 0.0
 
-    def output(self, sample_rate: int) -> int:
+    def output(self, sample_rate: int) -> float:
         if not self.enabled:
-            return 0
+            return 0.0
 
         frequency = self.frequency
         if frequency <= 0.0 or frequency >= sample_rate / 2:
-            return 0
+            return 0.0
 
         self.phase = (self.phase + frequency / sample_rate) % 1.0
-        step = int(self.phase * 32) & 0x1F
-        return 15 - step if step < 16 else step - 16
+        return 15.0 * (1.0 - abs(self.phase * 2.0 - 1.0))
 
 
 @dataclass
@@ -146,6 +156,7 @@ class NoiseChannel:
     enabled: bool = False
     shift_register: int = 1
     cycles_since_shift: float = 0.0
+    filtered_output: float = 0.0
 
     @property
     def volume(self) -> int:
@@ -167,9 +178,10 @@ class NoiseChannel:
         elif register == 3:
             self.length = value
 
-    def output(self, cycles_per_sample: float) -> int:
+    def output(self, cycles_per_sample: float) -> float:
         if not self.enabled or self.volume == 0:
-            return 0
+            self.filtered_output += (0.0 - self.filtered_output) * NOISE_OUTPUT_ALPHA
+            return self.filtered_output
 
         self.cycles_since_shift += cycles_per_sample
         while self.cycles_since_shift >= self.period_cycles:
@@ -178,12 +190,14 @@ class NoiseChannel:
             feedback = (self.shift_register & 0x01) ^ ((self.shift_register >> tap) & 0x01)
             self.shift_register = (self.shift_register >> 1) | (feedback << 14)
 
-        return 0 if self.shift_register & 0x01 else self.volume
+        raw_output = 0.0 if self.shift_register & 0x01 else float(self.volume)
+        self.filtered_output += (raw_output - self.filtered_output) * NOISE_OUTPUT_ALPHA
+        return self.filtered_output
 
 
 @dataclass
 class APU:
-    """Minimal audio generator for the NES pulse channels."""
+    """Approximate NES APU generator producing signed 16-bit mono PCM."""
 
     sample_rate: int = DEFAULT_AUDIO_SAMPLE_RATE
     registers: bytearray = field(default_factory=lambda: bytearray(APU_REGISTER_COUNT))
