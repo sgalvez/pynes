@@ -90,6 +90,11 @@ class NESBus:
             if address == 0x4016:
                 self.controller1.write_strobe(value)
                 self.controller2.write_strobe(value)
+            elif address == 0x4014:
+                assert self.ppu is not None
+                source = value << 8
+                for offset in range(256):
+                    self.ppu.oam[offset] = self.read(source + offset)
             else:
                 self.apu.write_register(address, value)
         elif 0x4020 <= address <= 0x7FFF:

@@ -161,7 +161,7 @@ def run_desktop(
                 else:
                     cycles = nes.run(instructions_per_frame, trace_callback=trace_callback)
                     audio = nes.apu.generate_samples(cycles)
-                    nes.ppu.render_background()
+                    nes.ppu.render_frame()
                 if audio_enabled and audio:
                     assert audio_channel is not None
                     sound = pygame.mixer.Sound(buffer=audio)

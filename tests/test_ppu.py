@@ -96,6 +96,24 @@ def test_background_rendering_uses_chr_tiles_nametable_attributes_and_palette() 
     assert ppu.framebuffer_bytes[:6] == bytes((*SYSTEM_PALETTE[0x02], *SYSTEM_PALETTE[0x01]))
 
 
+def test_sprite_rendering_draws_oam_sprite_over_background() -> None:
+    chr_data = bytearray(CHR_ROM_BANK_SIZE)
+    chr_data[16] = 0b1000_0000
+    chr_data[24] = 0
+    ppu = PPU(load_ines_rom(build_rom(chr_data=bytes(chr_data))))
+    ppu.mask = 0x10
+    ppu.palette[0] = 0x01
+    ppu.palette[0x11] = 0x30
+    ppu.oam[0:4] = bytes([9, 1, 0, 12])
+
+    ppu.render_background()
+    ppu.render_sprites()
+
+    pixel_index = 10 * SCREEN_WIDTH + 12
+    assert ppu.framebuffer[pixel_index] == SYSTEM_PALETTE[0x30]
+    assert ppu.framebuffer_bytes[pixel_index * 3 : pixel_index * 3 + 3] == bytes(SYSTEM_PALETTE[0x30])
+
+
 def test_vblank_status_read_clears_flag_and_nmi_callback_runs_once() -> None:
     nmi_count = 0
 
