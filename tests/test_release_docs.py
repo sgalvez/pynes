@@ -14,6 +14,7 @@ EXPECTED_RELEASES = (
     "v0.0.5",
     "v0.0.6",
     "v0.0.7",
+    "v1.0.0",
 )
 
 
@@ -30,7 +31,7 @@ def test_release_docs_exist_for_every_version() -> None:
         content = path.read_text(encoding="utf-8")
 
         assert re.search(rf"^# {re.escape(version)}\b", content)
-        assert "Release date: 2026-07-01" in content
+        assert re.search(r"^Release date: \d{4}-\d{2}-\d{2}$", content, re.MULTILINE)
         assert f"Tag: `{version}`" in content
         assert "## Summary" in content
         assert "## Validation" in content

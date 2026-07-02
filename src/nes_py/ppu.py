@@ -13,6 +13,7 @@ FRAMEBUFFER_SIZE = SCREEN_WIDTH * SCREEN_HEIGHT
 NAMETABLE_SIZE = 2 * 1024
 PALETTE_SIZE = 32
 OAM_SIZE = 256
+MAX_SPRITES_PER_SCANLINE = 8
 PPU_CYCLES_PER_SCANLINE = 341
 PPU_SCANLINES_PER_FRAME = 262
 VBLANK_START_SCANLINE = 241
@@ -317,6 +318,7 @@ class PPU:
         system_palette = SYSTEM_PALETTE
         universal_background = system_palette[palette[0] & 0x3F]
         cartridge = self.cartridge
+        selected_sprite_rows = self._selected_sprite_rows()
         for sprite_index in range(63, -1, -1):
             offset = sprite_index * 4
             sprite_y = self.oam[offset] + 1
@@ -334,6 +336,8 @@ class PPU:
                 source_row = 7 - row if flip_vertical else row
                 y = sprite_y + row
                 if y >= SCREEN_HEIGHT:
+                    continue
+                if not selected_sprite_rows[y] & (1 << sprite_index):
                     continue
                 tile_address = pattern_base + tile_index * 16 + source_row
                 low = cartridge.read_chr(tile_address)
@@ -359,6 +363,22 @@ class PPU:
                     framebuffer_bytes[byte_offset + 1] = color[1]
                     framebuffer_bytes[byte_offset + 2] = color[2]
         return self.framebuffer
+
+    def _selected_sprite_rows(self) -> list[int]:
+        """Select the first eight OAM sprites touching each visible scanline."""
+        rows = [0] * SCREEN_HEIGHT
+        row_counts = [0] * SCREEN_HEIGHT
+        for sprite_index in range(64):
+            offset = sprite_index * 4
+            sprite_y = self.oam[offset] + 1
+            if sprite_y >= SCREEN_HEIGHT:
+                continue
+            for y in range(sprite_y, min(sprite_y + 8, SCREEN_HEIGHT)):
+                if row_counts[y] >= MAX_SPRITES_PER_SCANLINE:
+                    continue
+                rows[y] |= 1 << sprite_index
+                row_counts[y] += 1
+        return rows
 
     def _background_palette_base(self, nametable_base: int, tile_x: int, tile_y: int) -> int:
         attribute_address = nametable_base + 0x03C0 + (tile_y // 4) * 8 + (tile_x // 4)

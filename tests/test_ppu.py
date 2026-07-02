@@ -169,6 +169,24 @@ def test_sprite_rendering_draws_oam_sprite_over_background() -> None:
     assert ppu.framebuffer_bytes[pixel_index * 3 : pixel_index * 3 + 3] == bytes(SYSTEM_PALETTE[0x30])
 
 
+def test_sprite_rendering_limits_visible_sprites_per_scanline() -> None:
+    chr_data = bytearray(CHR_ROM_BANK_SIZE)
+    chr_data[16] = 0b1000_0000
+    ppu = PPU(load_ines_rom(build_rom(chr_data=bytes(chr_data))))
+    ppu.mask = 0x10
+    ppu.palette[0] = 0x01
+    ppu.palette[0x11] = 0x30
+    for sprite_index in range(8):
+        offset = sprite_index * 4
+        ppu.oam[offset : offset + 4] = bytes([9, 1, 0, sprite_index * 8])
+    ppu.oam[32:36] = bytes([9, 1, 0, 80])
+
+    ppu.render_background()
+    ppu.render_sprites()
+
+    assert ppu.framebuffer[10 * SCREEN_WIDTH + 80] == SYSTEM_PALETTE[0x01]
+
+
 def test_vblank_status_read_clears_flag_and_nmi_callback_runs_once() -> None:
     nmi_count = 0
 

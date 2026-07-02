@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 CPU_CLOCK_HZ = 1_789_773
 DEFAULT_AUDIO_SAMPLE_RATE = 44_100
 APU_REGISTER_COUNT = 0x18
+AUDIO_LOW_PASS_ALPHA = 0.28
+AUDIO_OUTPUT_GAIN = 1.35
 NOISE_PERIODS: tuple[int, ...] = (
     4,
     8,
@@ -188,6 +190,7 @@ class APU:
     noise: NoiseChannel = field(default_factory=NoiseChannel)
     cycles_since_sample: float = 0.0
     dc_bias: float = 0.0
+    low_pass_sample: float = 0.0
 
     @property
     def cycles_per_sample(self) -> float:
@@ -201,6 +204,7 @@ class APU:
         self.noise = NoiseChannel()
         self.cycles_since_sample = 0.0
         self.dc_bias = 0.0
+        self.low_pass_sample = 0.0
 
     def read_register(self, address: int) -> int:
         address &= 0xFFFF
@@ -253,6 +257,8 @@ class APU:
             mixed = self._mixed_sample()
             self.dc_bias += (mixed - self.dc_bias) * 0.001
             mixed -= self.dc_bias
+            self.low_pass_sample += (mixed - self.low_pass_sample) * AUDIO_LOW_PASS_ALPHA
+            mixed = self.low_pass_sample
             value = int(max(-1.0, min(1.0, mixed)) * 32767)
             packed = value & 0xFFFF
             output.append(packed & 0xFF)
@@ -266,4 +272,4 @@ class APU:
         noise = self.noise.output(self.cycles_per_sample)
         tnd_input = triangle / 8227 + noise / 12241
         tnd_out = 0.0 if tnd_input == 0 else 159.79 / ((1 / tnd_input) + 100)
-        return (pulse_out + tnd_out) * 2.0
+        return (pulse_out + tnd_out) * AUDIO_OUTPUT_GAIN
