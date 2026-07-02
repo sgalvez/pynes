@@ -14,6 +14,7 @@ NAMETABLE_SIZE = 2 * 1024
 PALETTE_SIZE = 32
 OAM_SIZE = 256
 MAX_SPRITES_PER_SCANLINE = 8
+MAX_TILE_ROW_CACHE_SIZE = 4096
 PPU_CYCLES_PER_SCANLINE = 341
 PPU_SCANLINES_PER_FRAME = 262
 VBLANK_START_SCANLINE = 241
@@ -115,6 +116,11 @@ class PPU:
     background_framebuffer_bytes: bytearray = field(
         default_factory=lambda: bytearray(FRAMEBUFFER_SIZE * 3)
     )
+    # Decoded background rows survive redraws until CHR or palette writes can
+    # change the pixels that those rows represent.
+    tile_row_cache: dict[tuple[int, int, int, int, int], tuple[list[RGB], bytes]] = field(
+        default_factory=dict
+    )
     background_dirty: bool = True
     vram_address: int = 0
     scroll_x: int = 0
@@ -138,6 +144,7 @@ class PPU:
         self.cycle = 0
         self.frame = 0
         self.background_dirty = True
+        self.tile_row_cache.clear()
 
     @property
     def vblank(self) -> bool:
@@ -220,6 +227,7 @@ class PPU:
         if 0x0000 <= address <= 0x1FFF:
             self.cartridge.write_chr(address, value)
             self.background_dirty = True
+            self.tile_row_cache.clear()
         elif 0x2000 <= address <= 0x3EFF:
             index = self._nametable_index(address)
             if self.nametable[index] != value:
@@ -231,6 +239,7 @@ class PPU:
             if self.palette[index] != value:
                 self.palette[index] = value
                 self.background_dirty = True
+                self.tile_row_cache.clear()
 
     def step(self, cycles: int, *, render: bool = True) -> None:
         """Advance PPU timing by a number of PPU cycles."""
@@ -280,7 +289,7 @@ class PPU:
         coarse_scroll_y = self.scroll_y // 8
         fine_scroll_x = self.scroll_x & 0x07
         fine_scroll_y = self.scroll_y & 0x07
-        tile_row_cache: dict[tuple[int, int, int, int, int], tuple[list[RGB], bytes]] = {}
+        tile_row_cache = self.tile_row_cache
 
         for screen_tile_y in range(31):
             world_tile_y = (base_tile_y + coarse_scroll_y + screen_tile_y) % 60
@@ -304,6 +313,10 @@ class PPU:
         self.background_framebuffer[:] = self.framebuffer
         self.background_framebuffer_bytes[:] = self.framebuffer_bytes
         self.background_dirty = False
+        # Some games animate CHR data aggressively; bound the cache so those
+        # scenes do not trade a frame spike for unbounded memory growth.
+        if len(tile_row_cache) > MAX_TILE_ROW_CACHE_SIZE:
+            tile_row_cache.clear()
         return self.framebuffer
 
     def render_sprites(self) -> list[RGB]:
@@ -320,6 +333,9 @@ class PPU:
         cartridge = self.cartridge
         selected_sprite_rows = self._selected_sprite_rows()
         for sprite_index in range(63, -1, -1):
+            selected_rows = selected_sprite_rows[sprite_index]
+            if selected_rows == 0:
+                continue
             offset = sprite_index * 4
             sprite_y = self.oam[offset] + 1
             if sprite_y >= SCREEN_HEIGHT:
@@ -337,7 +353,7 @@ class PPU:
                 y = sprite_y + row
                 if y >= SCREEN_HEIGHT:
                     continue
-                if not selected_sprite_rows[y] & (1 << sprite_index):
+                if not selected_rows & (1 << row):
                     continue
                 tile_address = pattern_base + tile_index * 16 + source_row
                 low = cartridge.read_chr(tile_address)
@@ -365,20 +381,20 @@ class PPU:
         return self.framebuffer
 
     def _selected_sprite_rows(self) -> list[int]:
-        """Select the first eight OAM sprites touching each visible scanline."""
-        rows = [0] * SCREEN_HEIGHT
+        """Select visible rows for the first eight OAM sprites per scanline."""
+        selected_rows = [0] * 64
         row_counts = [0] * SCREEN_HEIGHT
         for sprite_index in range(64):
             offset = sprite_index * 4
             sprite_y = self.oam[offset] + 1
             if sprite_y >= SCREEN_HEIGHT:
                 continue
-            for y in range(sprite_y, min(sprite_y + 8, SCREEN_HEIGHT)):
+            for row, y in enumerate(range(sprite_y, min(sprite_y + 8, SCREEN_HEIGHT))):
                 if row_counts[y] >= MAX_SPRITES_PER_SCANLINE:
                     continue
-                rows[y] |= 1 << sprite_index
+                selected_rows[sprite_index] |= 1 << row
                 row_counts[y] += 1
-        return rows
+        return selected_rows
 
     def _background_palette_base(self, nametable_base: int, tile_x: int, tile_y: int) -> int:
         attribute_address = nametable_base + 0x03C0 + (tile_y // 4) * 8 + (tile_x // 4)

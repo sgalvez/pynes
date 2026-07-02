@@ -8,6 +8,7 @@ file before the tag is pushed.
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| [v1.0.1](v1.0.1.md) | 2026-07-02 | Smooth overloaded frames and soften audio peaks |
 | [v1.0.0](v1.0.0.md) | 2026-07-02 | Playability and standalone release milestone |
 | [v0.0.7](v0.0.7.md) | 2026-07-01 | Fix scaled Windows rendering crash |
 | [v0.0.6](v0.0.6.md) | 2026-07-01 | Improve emulator frame performance |
