@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from .cartridge import Cartridge
+from .cartridge import Cartridge, Mirroring
 
 SCREEN_WIDTH = 256
 SCREEN_HEIGHT = 240
@@ -240,27 +240,38 @@ class PPU:
         return self.framebuffer
 
     def render_background(self) -> list[RGB]:
-        """Render nametable 0 background tiles into the framebuffer."""
+        """Render the scroll-selected background into the framebuffer."""
         pattern_base = 0x1000 if self.ctrl & 0x10 else 0x0000
-        nametable = self.nametable
         palette = self.palette
         system_palette = SYSTEM_PALETTE
         cartridge = self.cartridge
-        for tile_y in range(30):
-            for tile_x in range(32):
-                tile_index = nametable[(tile_y * 32) + tile_x]
-                palette_base = self._background_palette_base(tile_x, tile_y)
-                for row in range(8):
-                    low = cartridge.read_chr(pattern_base + tile_index * 16 + row)
-                    high = cartridge.read_chr(pattern_base + tile_index * 16 + row + 8)
-                    y = tile_y * 8 + row
-                    pixel_offset = y * SCREEN_WIDTH + tile_x * 8
-                    for col in range(8):
-                        bit = 7 - col
-                        color_bits = ((high >> bit) & 0x01) << 1 | ((low >> bit) & 0x01)
-                        palette_address = palette_base + color_bits
-                        color_index = palette[palette_address] & 0x3F
-                        self._set_pixel(pixel_offset + col, system_palette[color_index])
+        base_nametable = self.ctrl & 0x03
+        base_x = (base_nametable & 0x01) * SCREEN_WIDTH
+        base_y = ((base_nametable >> 1) & 0x01) * SCREEN_HEIGHT
+
+        for y in range(SCREEN_HEIGHT):
+            world_y = (base_y + self.scroll_y + y) % (SCREEN_HEIGHT * 2)
+            nametable_y = world_y // SCREEN_HEIGHT
+            tile_y = (world_y % SCREEN_HEIGHT) // 8
+            fine_y = world_y & 0x07
+            pixel_offset = y * SCREEN_WIDTH
+            for x in range(SCREEN_WIDTH):
+                world_x = (base_x + self.scroll_x + x) % (SCREEN_WIDTH * 2)
+                nametable_x = world_x // SCREEN_WIDTH
+                tile_x = (world_x % SCREEN_WIDTH) // 8
+                fine_x = world_x & 0x07
+                nametable_id = nametable_y * 2 + nametable_x
+                nametable_base = 0x2000 + nametable_id * 0x0400
+                tile_index = self.nametable[
+                    self._nametable_index(nametable_base + tile_y * 32 + tile_x)
+                ]
+                low = cartridge.read_chr(pattern_base + tile_index * 16 + fine_y)
+                high = cartridge.read_chr(pattern_base + tile_index * 16 + fine_y + 8)
+                bit = 7 - fine_x
+                color_bits = ((high >> bit) & 0x01) << 1 | ((low >> bit) & 0x01)
+                palette_base = self._background_palette_base(nametable_base, tile_x, tile_y)
+                color_index = palette[palette_base + color_bits] & 0x3F
+                self._set_pixel(pixel_offset + x, system_palette[color_index])
         return self.framebuffer
 
     def render_sprites(self) -> list[RGB]:
@@ -302,9 +313,9 @@ class PPU:
                     self._set_pixel(pixel_index, SYSTEM_PALETTE[color_index])
         return self.framebuffer
 
-    def _background_palette_base(self, tile_x: int, tile_y: int) -> int:
-        attribute_index = 0x03C0 + (tile_y // 4) * 8 + (tile_x // 4)
-        attribute = self.nametable[attribute_index]
+    def _background_palette_base(self, nametable_base: int, tile_x: int, tile_y: int) -> int:
+        attribute_address = nametable_base + 0x03C0 + (tile_y // 4) * 8 + (tile_x // 4)
+        attribute = self.nametable[self._nametable_index(attribute_address)]
         shift = ((tile_y % 4) // 2) * 4 + ((tile_x % 4) // 2) * 2
         palette_number = (attribute >> shift) & 0x03
         return palette_number * 4
@@ -313,7 +324,16 @@ class PPU:
         return 32 if self.ctrl & 0x04 else 1
 
     def _nametable_index(self, address: int) -> int:
-        return (address - 0x2000) % NAMETABLE_SIZE
+        index = (address - 0x2000) % 0x1000
+        table = index // 0x0400
+        offset = index % 0x0400
+        if self.cartridge.mirroring == Mirroring.VERTICAL:
+            mirrored_table = table % 2
+        elif self.cartridge.mirroring == Mirroring.HORIZONTAL:
+            mirrored_table = 0 if table in (0, 1) else 1
+        else:
+            mirrored_table = table % 2
+        return mirrored_table * 0x0400 + offset
 
     def _palette_index(self, address: int) -> int:
         index = (address - 0x3F00) % PALETTE_SIZE

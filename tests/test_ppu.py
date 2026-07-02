@@ -96,6 +96,25 @@ def test_background_rendering_uses_chr_tiles_nametable_attributes_and_palette() 
     assert ppu.framebuffer_bytes[:6] == bytes((*SYSTEM_PALETTE[0x02], *SYSTEM_PALETTE[0x01]))
 
 
+def test_background_rendering_uses_scroll_offsets() -> None:
+    chr_data = bytearray(CHR_ROM_BANK_SIZE)
+    chr_data[0] = 0b1000_0000
+    chr_data[16 + 8] = 0b1000_0000
+    ppu = PPU(load_ines_rom(build_rom(chr_data=bytes(chr_data))))
+    ppu.nametable[0] = 0
+    ppu.nametable[1] = 1
+    ppu.palette[1] = 0x02
+    ppu.palette[2] = 0x03
+
+    ppu.render_background()
+    assert ppu.framebuffer[0] == SYSTEM_PALETTE[0x02]
+
+    ppu.scroll_x = 8
+    ppu.render_background()
+
+    assert ppu.framebuffer[0] == SYSTEM_PALETTE[0x03]
+
+
 def test_sprite_rendering_draws_oam_sprite_over_background() -> None:
     chr_data = bytearray(CHR_ROM_BANK_SIZE)
     chr_data[16] = 0b1000_0000
