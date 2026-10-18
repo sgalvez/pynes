@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]

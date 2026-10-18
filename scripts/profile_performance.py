@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable
-from dataclasses import dataclass
-from pathlib import Path
 import statistics
 import subprocess
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
 from time import perf_counter
-
 
 ROOT = Path(__file__).resolve().parents[1]
 PRG_ROM_BANK_SIZE = 16 * 1024

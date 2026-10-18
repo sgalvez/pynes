@@ -28,8 +28,8 @@ def build_rom(
     header[6] = flags6
     header[7] = flags7
 
-    prg_rom = bytes((index % 256 for index in range(prg_banks * PRG_ROM_BANK_SIZE)))
-    chr_rom = bytes(((index + 7) % 256 for index in range(chr_banks * CHR_ROM_BANK_SIZE)))
+    prg_rom = bytes(index % 256 for index in range(prg_banks * PRG_ROM_BANK_SIZE))
+    chr_rom = bytes((index + 7) % 256 for index in range(chr_banks * CHR_ROM_BANK_SIZE))
     return bytes(header) + trainer + prg_rom + chr_rom
 
 

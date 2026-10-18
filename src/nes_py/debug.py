@@ -151,7 +151,8 @@ def open_trace_sink(path: str | Path | None) -> tuple[Callable[[str], object], T
     """Return a trace sink and optional file handle that must be closed."""
     if path is None:
         return print, None
-    handle = Path(path).open("w", encoding="utf-8")
+    # Ownership is transferred to the caller, which closes this handle in finally.
+    handle = Path(path).open("w", encoding="utf-8")  # noqa: SIM115
     return lambda line: print(line, file=handle), handle
 
 

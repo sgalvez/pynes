@@ -5,7 +5,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from build_metadata import DEFAULT_BUILD_DIR, DEFAULT_METADATA_PATH, read_metadata, write_json
+from build_metadata import (
+    DEFAULT_BUILD_DIR,
+    DEFAULT_METADATA_PATH,
+    read_metadata,
+    write_json,
+)
 
 
 def wheel_name(version: str) -> str:
