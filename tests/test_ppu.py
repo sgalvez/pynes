@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from nes_py.cartridge import CHR_RAM_SIZE, CHR_ROM_BANK_SIZE, PRG_ROM_BANK_SIZE, load_ines_rom
+from nes_py.cartridge import (
+    CHR_RAM_SIZE,
+    CHR_ROM_BANK_SIZE,
+    PRG_ROM_BANK_SIZE,
+    load_ines_rom,
+)
 from nes_py.nes import NES
 from nes_py.ppu import PPU, SCREEN_HEIGHT, SCREEN_WIDTH, SYSTEM_PALETTE
 

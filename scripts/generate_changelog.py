@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import re
+from pathlib import Path
 
 from build_metadata import (
     DEFAULT_BUILD_DIR,

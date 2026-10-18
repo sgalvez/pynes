@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from nes_py import __version__
 import nes_py.cli
+from nes_py import __version__
 from nes_py.cli import main
 from nes_py.debug import SmokeTestResult
 

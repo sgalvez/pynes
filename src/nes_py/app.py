@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
+import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
-import warnings
 
 from .debug import make_trace_callback, open_trace_sink
 from .input import Button
