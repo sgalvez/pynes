@@ -5,6 +5,7 @@ from .version import get_build_info, get_version
 __version__ = get_version()
 
 _LAZY_EXPORTS = {
+    "APU": ("apu", "APU"),
     "Button": ("input", "Button"),
     "Cartridge": ("cartridge", "Cartridge"),
     "CartridgeError": ("cartridge", "CartridgeError"),
@@ -42,6 +43,7 @@ def __getattr__(name: str):
 
 
 __all__ = [
+    "APU",
     "CPU6502",
     "NES",
     "PPU",

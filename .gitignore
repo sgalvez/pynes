@@ -207,6 +207,10 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# Local cartridge dumps and generated audio
+*.nes
+*.wav
+
 # PyPI configuration file
 .pypirc
 

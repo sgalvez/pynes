@@ -1,0 +1,15 @@
+{
+  "folders": [
+    { "name": "Emulador", "path": "src/nes_py" },
+    { "name": "Pruebas", "path": "tests" },
+    { "name": "Proyecto", "path": "." }
+  ],
+  "settings": {
+    "files.exclude": {
+      "**/__pycache__": true,
+      "**/*.egg-info": true,
+      "**/.pytest_cache": true,
+      "**/.ruff_cache": true
+    }
+  }
+}

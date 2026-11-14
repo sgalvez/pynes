@@ -37,48 +37,40 @@ def test_cli_default_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_cli_runs_desktop_with_rom_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[tuple[str, int, int | None, bool, bool, str | None]] = []
+    calls: list[tuple[str, int, int, bool, bool, str | None, bool]] = []
 
     def fake_run_desktop(
         rom: str,
         *,
         scale: int,
-        instructions_per_frame: int | None,
+        instructions_per_frame: int,
         trace: bool,
         disassemble: bool,
         trace_file: str | None,
+        audio_pilot: bool,
     ) -> int:
-        calls.append((rom, scale, instructions_per_frame, trace, disassemble, trace_file))
+        calls.append(
+            (
+                rom,
+                scale,
+                instructions_per_frame,
+                trace,
+                disassemble,
+                trace_file,
+                audio_pilot,
+            )
+        )
         return 0
 
     monkeypatch.setattr(nes_py.cli, "run_desktop", fake_run_desktop)
 
     assert main(["game.nes", "--scale", "2", "--instructions-per-frame", "123"]) == 0
-    assert calls == [("game.nes", 2, 123, False, False, None)]
+    assert calls == [("game.nes", 2, 123, False, False, None, False)]
 
 
-def test_cli_uses_automatic_frame_pacing_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[int | None] = []
-
-    def fake_run_desktop(
-        rom: str,
-        *,
-        scale: int,
-        instructions_per_frame: int | None,
-        trace: bool,
-        disassemble: bool,
-        trace_file: str | None,
-    ) -> int:
-        calls.append(instructions_per_frame)
-        return 0
-
-    monkeypatch.setattr(nes_py.cli, "run_desktop", fake_run_desktop)
-
-    assert main(["game.nes"]) == 0
-    assert calls == [None]
-
-
-def test_cli_smoke_test_mode(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_smoke_test_mode(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     calls: list[tuple[str, int, bool]] = []
 
     def fake_run_smoke_test(
@@ -120,6 +112,39 @@ def test_cli_reports_missing_display_dependency_without_traceback(
     captured = capsys.readouterr()
     assert "install pygame please" in captured.err
     assert "Traceback" not in captured.err
+
+
+def test_cli_passes_audio_pilot_flag(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(
+        nes_py.cli, "run_desktop", lambda rom, **kwargs: calls.append(kwargs) or 0
+    )
+    assert main(["game.nes", "--audio-pilot"]) == 0
+    assert calls[0]["audio_pilot"] is True
+
+
+def test_cli_rejects_audio_pilot_in_smoke_mode(capsys) -> None:
+    with pytest.raises(SystemExit) as error:
+        main(["game.nes", "--audio-pilot", "--smoke-test", "1"])
+    assert error.value.code == 2
+    assert "requires desktop mode" in capsys.readouterr().err
+
+
+def test_cli_reports_audio_backend_failure_without_traceback(
+    monkeypatch, capsys
+) -> None:
+    from nes_py.audio import AudioUnavailableError
+
+    def unavailable(*args, **kwargs):
+        raise AudioUnavailableError("no SDL_mixer support")
+
+    monkeypatch.setattr("nes_py.app.run_desktop", unavailable)
+    with pytest.raises(SystemExit) as error:
+        main(["game.nes", "--audio-pilot"])
+    assert error.value.code == 2
+    output = capsys.readouterr().err
+    assert "no SDL_mixer support" in output
+    assert "Traceback" not in output
 
 
 def test_cli_reports_cartridge_errors_without_traceback(
