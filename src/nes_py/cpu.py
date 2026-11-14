@@ -64,6 +64,8 @@ class CPU6502:
     sp: int = 0xFD
     status: int = int(StatusFlag.UNUSED | StatusFlag.INTERRUPT_DISABLE)
     cycles: int = 0
+    irq_line: bool = False
+    _irq_mask_override: bool | None = field(default=None, init=False, repr=False)
 
     def reset(self) -> None:
         """Reset the CPU from the reset vector at 0xFFFC/0xFFFD."""
@@ -74,22 +76,44 @@ class CPU6502:
         self.status = int(StatusFlag.UNUSED | StatusFlag.INTERRUPT_DISABLE)
         self.pc = self._read_u16(0xFFFC)
         self.cycles = 7
+        self.irq_line = False
+        self._irq_mask_override = None
 
-    def nmi(self) -> None:
-        """Service a non-maskable interrupt."""
+    def set_irq_line(self, asserted: bool) -> None:
+        """Set the level-sensitive IRQ input; servicing never clears its source."""
+        self.irq_line = asserted
+
+    def _interrupt(self, vector: int) -> None:
+        self._irq_mask_override = None
         self._push((self.pc >> 8) & 0xFF)
         self._push(self.pc & 0xFF)
         self._push(self.status & ~int(StatusFlag.BREAK) | int(StatusFlag.UNUSED))
         self.set_flag(StatusFlag.INTERRUPT_DISABLE, True)
-        self.pc = self._read_u16(0xFFFA)
+        self.pc = self._read_u16(vector)
         self.cycles += 7
 
+    def nmi(self) -> None:
+        """Service a non-maskable interrupt."""
+        self._interrupt(0xFFFA)
+
     def step(self) -> int:
-        """Execute one instruction and return the cycles it consumed."""
+        """Execute an instruction or service IRQ and return elapsed CPU cycles."""
+        if self.irq_line:
+            masked = (
+                bool(self.status & 0x04)
+                if self._irq_mask_override is None
+                else self._irq_mask_override
+            )
+            if not masked:
+                self._interrupt(0xFFFE)
+                return 7
+        self._irq_mask_override = None
         opcode = self._fetch_byte()
         method = self._opcode_table[opcode]
         if method is None:
-            raise CPUError(f"Unsupported opcode 0x{opcode:02X} at 0x{(self.pc - 1) & 0xFFFF:04X}")
+            raise CPUError(
+                f"Unsupported opcode 0x{opcode:02X} at 0x{(self.pc - 1) & 0xFFFF:04X}"
+            )
         before = self.cycles
         method(self)
         self.status |= int(StatusFlag.UNUSED)
@@ -122,7 +146,9 @@ class CPU6502:
         return low | (self._read(high_address) << 8)
 
     def _fetch_byte(self) -> int:
-        value = self._read(self.pc)
+        # PC is already 16-bit. Read through the bus directly to avoid another
+        # Python call for every opcode and operand byte.
+        value = self.bus.read(self.pc) & 0xFF
         self.pc = (self.pc + 1) & 0xFFFF
         return value
 
@@ -140,9 +166,11 @@ class CPU6502:
         return self._read(0x0100 | self.sp)
 
     def _set_zn(self, value: int) -> None:
+        """Update zero/negative together and keep the unused bit high."""
         value &= 0xFF
-        self.set_flag(StatusFlag.ZERO, value == 0)
-        self.set_flag(StatusFlag.NEGATIVE, bool(value & 0x80))
+        self.status = (
+            (self.status & 0x7D) | 0x20 | (value & 0x80) | (0x02 if value == 0 else 0)
+        )
 
     def _page_crossed(self, left: int, right: int) -> bool:
         return (left & 0xFF00) != (right & 0xFF00)
@@ -205,7 +233,9 @@ class CPU6502:
         total = self.a + value + carry
         result = total & 0xFF
         self.set_flag(StatusFlag.CARRY, total > 0xFF)
-        self.set_flag(StatusFlag.OVERFLOW, bool((~(self.a ^ value) & (self.a ^ result)) & 0x80))
+        self.set_flag(
+            StatusFlag.OVERFLOW, bool((~(self.a ^ value) & (self.a ^ result)) & 0x80)
+        )
         self.a = result
         self._set_zn(self.a)
 
@@ -238,7 +268,9 @@ class CPU6502:
         self._set_zn(value)
         return value
 
-    def _read_op(self, addr_mode, operation, cycles: int, page_cycle: bool = False) -> None:
+    def _read_op(
+        self, addr_mode, operation, cycles: int, page_cycle: bool = False
+    ) -> None:
         address, page = addr_mode()
         operation(self._read(address))
         self.cycles += cycles + (1 if page_cycle and page else 0)
@@ -304,16 +336,29 @@ class CPU6502:
         return address, False
 
 
-def _make_read_op(operation: str, addr_mode: str, cycles: int, page_cycle: bool = False):
+def _make_read_op(
+    operation: str, addr_mode: str, cycles: int, page_cycle: bool = False
+):
+    resolve_address = getattr(CPU6502, addr_mode)
+    apply_value = getattr(CPU6502, operation)
+
     def opcode(self: CPU6502) -> None:
-        self._read_op(getattr(self, addr_mode), getattr(self, operation), cycles, page_cycle)
+        # Resolve private handlers once during opcode installation. The bus
+        # still handles every access, including APU status and mapper reads.
+        address, page = resolve_address(self)
+        apply_value(self, self.bus.read(address & 0xFFFF) & 0xFF)
+        self.cycles += cycles + (1 if page_cycle and page else 0)
 
     return opcode
 
 
 def _make_store_op(register: str, addr_mode: str, cycles: int):
+    resolve_address = getattr(CPU6502, addr_mode)
+
     def opcode(self: CPU6502) -> None:
-        self._write_op(getattr(self, addr_mode), getattr(self, register), cycles)
+        address, _ = resolve_address(self)
+        self.bus.write(address & 0xFFFF, getattr(self, register) & 0xFF)
+        self.cycles += cycles
 
     return opcode
 
@@ -334,13 +379,25 @@ def _make_accumulator_op(operation: str, cycles: int = 2):
 
 
 def _make_branch_op(flag: StatusFlag, expected: bool):
+    mask = int(flag)
+
     def opcode(self: CPU6502) -> None:
-        self._branch(self.get_flag(flag) is expected)
+        self._branch(bool(self.status & mask) is expected)
 
     return opcode
 
 
 def _make_flag_op(flag: StatusFlag, value: bool):
+    if flag == StatusFlag.INTERRUPT_DISABLE:
+
+        def irq_flag_opcode(self: CPU6502) -> None:
+            # CLI/SEI change I after the instruction's interrupt poll.
+            self._irq_mask_override = bool(self.status & 0x04)
+            self.set_flag(flag, value)
+            self.cycles += 2
+
+        return irq_flag_opcode
+
     def opcode(self: CPU6502) -> None:
         self.set_flag(flag, value)
         self.cycles += 2
@@ -422,6 +479,7 @@ def _op_php(self: CPU6502) -> None:
 
 
 def _op_plp(self: CPU6502) -> None:
+    self._irq_mask_override = bool(self.status & 0x04)
     self.status = (self._pull() & ~int(StatusFlag.BREAK)) | int(StatusFlag.UNUSED)
     self.cycles += 4
 
@@ -572,8 +630,16 @@ def _install_official_opcodes() -> None:
             (0xC1, "_addr_indx", 6, False),
             (0xD1, "_addr_indy", 5, True),
         ],
-        "_cpx": [(0xE0, "_imm", 2, False), (0xE4, "_addr_zp", 3, False), (0xEC, "_addr_abs", 4, False)],
-        "_cpy": [(0xC0, "_imm", 2, False), (0xC4, "_addr_zp", 3, False), (0xCC, "_addr_abs", 4, False)],
+        "_cpx": [
+            (0xE0, "_imm", 2, False),
+            (0xE4, "_addr_zp", 3, False),
+            (0xEC, "_addr_abs", 4, False),
+        ],
+        "_cpy": [
+            (0xC0, "_imm", 2, False),
+            (0xC4, "_addr_zp", 3, False),
+            (0xCC, "_addr_abs", 4, False),
+        ],
     }
     for operation, specs in read_ops.items():
         for opcode, addr_mode, cycles, page_cycle in specs:
@@ -582,7 +648,18 @@ def _install_official_opcodes() -> None:
             setattr(CPU6502, f"_op_{opcode:02x}", method)
 
     stores = [
-        ("a", [(0x85, "_addr_zp", 3), (0x95, "_addr_zpx", 4), (0x8D, "_addr_abs", 4), (0x9D, "_addr_absx", 5), (0x99, "_addr_absy", 5), (0x81, "_addr_indx", 6), (0x91, "_addr_indy", 6)]),
+        (
+            "a",
+            [
+                (0x85, "_addr_zp", 3),
+                (0x95, "_addr_zpx", 4),
+                (0x8D, "_addr_abs", 4),
+                (0x9D, "_addr_absx", 5),
+                (0x99, "_addr_absy", 5),
+                (0x81, "_addr_indx", 6),
+                (0x91, "_addr_indy", 6),
+            ],
+        ),
         ("x", [(0x86, "_addr_zp", 3), (0x96, "_addr_zpy", 4), (0x8E, "_addr_abs", 4)]),
         ("y", [(0x84, "_addr_zp", 3), (0x94, "_addr_zpx", 4), (0x8C, "_addr_abs", 4)]),
     ]
@@ -593,12 +670,42 @@ def _install_official_opcodes() -> None:
             setattr(CPU6502, f"_op_{opcode:02x}", method)
 
     modifies = {
-        "_asl_value": [(0x06, "_addr_zp", 5), (0x16, "_addr_zpx", 6), (0x0E, "_addr_abs", 6), (0x1E, "_addr_absx", 7)],
-        "_rol_value": [(0x26, "_addr_zp", 5), (0x36, "_addr_zpx", 6), (0x2E, "_addr_abs", 6), (0x3E, "_addr_absx", 7)],
-        "_lsr_value": [(0x46, "_addr_zp", 5), (0x56, "_addr_zpx", 6), (0x4E, "_addr_abs", 6), (0x5E, "_addr_absx", 7)],
-        "_ror_value": [(0x66, "_addr_zp", 5), (0x76, "_addr_zpx", 6), (0x6E, "_addr_abs", 6), (0x7E, "_addr_absx", 7)],
-        "_dec_value": [(0xC6, "_addr_zp", 5), (0xD6, "_addr_zpx", 6), (0xCE, "_addr_abs", 6), (0xDE, "_addr_absx", 7)],
-        "_inc_value": [(0xE6, "_addr_zp", 5), (0xF6, "_addr_zpx", 6), (0xEE, "_addr_abs", 6), (0xFE, "_addr_absx", 7)],
+        "_asl_value": [
+            (0x06, "_addr_zp", 5),
+            (0x16, "_addr_zpx", 6),
+            (0x0E, "_addr_abs", 6),
+            (0x1E, "_addr_absx", 7),
+        ],
+        "_rol_value": [
+            (0x26, "_addr_zp", 5),
+            (0x36, "_addr_zpx", 6),
+            (0x2E, "_addr_abs", 6),
+            (0x3E, "_addr_absx", 7),
+        ],
+        "_lsr_value": [
+            (0x46, "_addr_zp", 5),
+            (0x56, "_addr_zpx", 6),
+            (0x4E, "_addr_abs", 6),
+            (0x5E, "_addr_absx", 7),
+        ],
+        "_ror_value": [
+            (0x66, "_addr_zp", 5),
+            (0x76, "_addr_zpx", 6),
+            (0x6E, "_addr_abs", 6),
+            (0x7E, "_addr_absx", 7),
+        ],
+        "_dec_value": [
+            (0xC6, "_addr_zp", 5),
+            (0xD6, "_addr_zpx", 6),
+            (0xCE, "_addr_abs", 6),
+            (0xDE, "_addr_absx", 7),
+        ],
+        "_inc_value": [
+            (0xE6, "_addr_zp", 5),
+            (0xF6, "_addr_zpx", 6),
+            (0xEE, "_addr_abs", 6),
+            (0xFE, "_addr_absx", 7),
+        ],
     }
     for operation, specs in modifies.items():
         for opcode, addr_mode, cycles in specs:
@@ -606,7 +713,12 @@ def _install_official_opcodes() -> None:
             opcode_table[opcode] = method
             setattr(CPU6502, f"_op_{opcode:02x}", method)
 
-    for opcode, operation in [(0x0A, "_asl_value"), (0x2A, "_rol_value"), (0x4A, "_lsr_value"), (0x6A, "_ror_value")]:
+    for opcode, operation in [
+        (0x0A, "_asl_value"),
+        (0x2A, "_rol_value"),
+        (0x4A, "_lsr_value"),
+        (0x6A, "_ror_value"),
+    ]:
         method = _make_accumulator_op(operation)
         opcode_table[opcode] = method
         setattr(CPU6502, f"_op_{opcode:02x}", method)
@@ -647,7 +759,12 @@ def _install_official_opcodes() -> None:
         opcode_table[opcode] = method
         setattr(CPU6502, f"_op_{opcode:02x}", method)
 
-    for opcode, register, delta in [(0xE8, "x", 1), (0xC8, "y", 1), (0xCA, "x", -1), (0x88, "y", -1)]:
+    for opcode, register, delta in [
+        (0xE8, "x", 1),
+        (0xC8, "y", 1),
+        (0xCA, "x", -1),
+        (0x88, "y", -1),
+    ]:
         method = _make_inc_register_op(register, delta)
         opcode_table[opcode] = method
         setattr(CPU6502, f"_op_{opcode:02x}", method)

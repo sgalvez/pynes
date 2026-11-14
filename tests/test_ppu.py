@@ -7,7 +7,13 @@ from nes_py.cartridge import (
     load_ines_rom,
 )
 from nes_py.nes import NES
-from nes_py.ppu import PPU, SCREEN_HEIGHT, SCREEN_WIDTH, SYSTEM_PALETTE
+from nes_py.ppu import (
+    PPU,
+    SCREEN_HEIGHT,
+    SCREEN_WIDTH,
+    SYSTEM_PALETTE,
+    _background_strip,
+)
 
 
 def build_rom(*, chr_data: bytes | None = None, chr_banks: int = 1) -> bytes:
@@ -20,7 +26,11 @@ def build_rom(*, chr_data: bytes | None = None, chr_banks: int = 1) -> bytes:
     prg_rom[-5] = 0x81
     prg_rom[-4] = 0x00
     prg_rom[-3] = 0x80
-    chr_rom = chr_data if chr_data is not None else bytes(CHR_ROM_BANK_SIZE if chr_banks else 0)
+    chr_rom = (
+        chr_data
+        if chr_data is not None
+        else bytes(CHR_ROM_BANK_SIZE if chr_banks else 0)
+    )
     return bytes(header) + bytes(prg_rom) + chr_rom
 
 
@@ -33,6 +43,7 @@ def test_ppu_address_and_data_registers_access_nametable_and_palette_memory() ->
 
     ppu.write_register(6, 0x20)
     ppu.write_register(6, 0x00)
+    assert ppu.read_register(7) == 0  # PPUDATA returns its previous read buffer first.
     assert ppu.read_register(7) == 0x23
 
     ppu.write_register(6, 0x3F)
@@ -87,6 +98,7 @@ def test_background_rendering_uses_chr_tiles_nametable_attributes_and_palette() 
     chr_data[1] = 0b0100_0000
     chr_data[9] = 0b0100_0000
     ppu = PPU(load_ines_rom(build_rom(chr_data=bytes(chr_data))))
+    ppu.write_register(1, 0x0A)
     ppu.nametable[0] = 0
     ppu.palette[0] = 0x01
     ppu.palette[1] = 0x02
@@ -98,7 +110,9 @@ def test_background_rendering_uses_chr_tiles_nametable_attributes_and_palette() 
     assert framebuffer[0] == SYSTEM_PALETTE[0x02]
     assert framebuffer[1] == SYSTEM_PALETTE[0x01]
     assert framebuffer[SCREEN_WIDTH + 1] == SYSTEM_PALETTE[0x03]
-    assert ppu.framebuffer_bytes[:6] == bytes((*SYSTEM_PALETTE[0x02], *SYSTEM_PALETTE[0x01]))
+    assert ppu.framebuffer_bytes[:6] == bytes(
+        (*SYSTEM_PALETTE[0x02], *SYSTEM_PALETTE[0x01])
+    )
 
 
 def test_background_rendering_uses_scroll_offsets() -> None:
@@ -106,6 +120,7 @@ def test_background_rendering_uses_scroll_offsets() -> None:
     chr_data[0] = 0b1000_0000
     chr_data[16 + 8] = 0b1000_0000
     ppu = PPU(load_ines_rom(build_rom(chr_data=bytes(chr_data))))
+    ppu.write_register(1, 0x0A)
     ppu.nametable[0] = 0
     ppu.nametable[1] = 1
     ppu.palette[1] = 0x02
@@ -114,7 +129,8 @@ def test_background_rendering_uses_scroll_offsets() -> None:
     ppu.render_background()
     assert ppu.framebuffer[0] == SYSTEM_PALETTE[0x02]
 
-    ppu.scroll_x = 8
+    ppu.write_register(5, 8)
+    ppu.write_register(5, 0)
     ppu.render_background()
 
     assert ppu.framebuffer[0] == SYSTEM_PALETTE[0x03]
@@ -125,50 +141,57 @@ def test_render_frame_reuses_background_until_scroll_changes() -> None:
     chr_data[0] = 0b1000_0000
     chr_data[16 + 8] = 0b1000_0000
     ppu = PPU(load_ines_rom(build_rom(chr_data=bytes(chr_data))))
+    ppu.write_register(1, 0x0A)
     ppu.nametable[0] = 0
     ppu.nametable[1] = 1
     ppu.palette[1] = 0x02
     ppu.palette[2] = 0x03
 
     ppu.render_frame()
-    assert not ppu.background_dirty
+    before = bytes(ppu.framebuffer_bytes)
     assert ppu.framebuffer[0] == SYSTEM_PALETTE[0x02]
 
     ppu.write_register(5, 8)
-    assert ppu.background_dirty
+    ppu.write_register(5, 0)
     ppu.render_frame()
 
-    assert not ppu.background_dirty
     assert ppu.framebuffer[0] == SYSTEM_PALETTE[0x03]
+    assert ppu.framebuffer_bytes != before
 
 
 def test_repeated_scroll_and_vram_writes_keep_background_cache_clean() -> None:
     ppu = PPU(load_ines_rom(build_rom()))
+    ppu.write_register(1, 0x0A)
     ppu.write_register(5, 8)
     ppu.write_register(5, 16)
     ppu.render_frame()
+    before = bytes(ppu.framebuffer_bytes)
+    misses = _background_strip.cache_info().misses
 
     ppu.write_register(5, 8)
     ppu.write_register(5, 16)
     ppu.write(0x2000, ppu.nametable[0])
     ppu.write(0x3F00, ppu.palette[0])
 
-    assert not ppu.background_dirty
+    ppu.render_frame()
+    assert ppu.framebuffer_bytes == before
+    assert _background_strip.cache_info().misses == misses
 
 
 def test_background_tile_row_cache_reuses_rows_across_redraws() -> None:
     chr_data = bytearray(CHR_ROM_BANK_SIZE)
     chr_data[0] = 0b1000_0000
     ppu = PPU(load_ines_rom(build_rom(chr_data=bytes(chr_data))))
+    ppu.write_register(1, 0x0A)
     ppu.palette[1] = 0x02
 
     ppu.render_background()
-    cache_size = len(ppu.tile_row_cache)
-    ppu.background_dirty = True
+    before = _background_strip.cache_info()
     ppu.render_background()
 
-    assert cache_size > 0
-    assert len(ppu.tile_row_cache) == cache_size
+    after = _background_strip.cache_info()
+    assert after.hits > before.hits
+    assert after.misses == before.misses
 
 
 def test_sprite_rendering_draws_oam_sprite_over_background() -> None:
@@ -186,7 +209,9 @@ def test_sprite_rendering_draws_oam_sprite_over_background() -> None:
 
     pixel_index = 10 * SCREEN_WIDTH + 12
     assert ppu.framebuffer[pixel_index] == SYSTEM_PALETTE[0x30]
-    assert ppu.framebuffer_bytes[pixel_index * 3 : pixel_index * 3 + 3] == bytes(SYSTEM_PALETTE[0x30])
+    assert ppu.framebuffer_bytes[pixel_index * 3 : pixel_index * 3 + 3] == bytes(
+        SYSTEM_PALETTE[0x30]
+    )
 
 
 def test_sprite_rendering_limits_visible_sprites_per_scanline() -> None:

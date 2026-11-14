@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
 from pathlib import Path
 
 INES_MAGIC = b"NES\x1a"
@@ -24,6 +25,8 @@ class Mirroring(Enum):
     HORIZONTAL = "horizontal"
     VERTICAL = "vertical"
     FOUR_SCREEN = "four_screen"
+    SINGLE_SCREEN_LOWER = "single_screen_lower"
+    SINGLE_SCREEN_UPPER = "single_screen_upper"
 
 
 @dataclass(frozen=True)
@@ -80,6 +83,18 @@ class Mapper0:
         """Ignore CPU writes to PRG ROM space."""
 
 
+@lru_cache(maxsize=128)
+def _mmc1_prg_bases(count: int, mode: int, selected: int) -> tuple[int, int]:
+    """Resolve PRG windows by live register values, including direct mutations."""
+    if mode in (0, 1):
+        lower, upper = selected & 0x0E, (selected & 0x0E) + 1
+    elif mode == 2:
+        lower, upper = 0, selected
+    else:
+        lower, upper = selected, count - 1
+    return (lower % count) * PRG_ROM_BANK_SIZE, (upper % count) * PRG_ROM_BANK_SIZE
+
+
 @dataclass
 class Mapper1:
     """Mapper 1 / MMC1 serial-register address mapping."""
@@ -99,15 +114,10 @@ class Mapper1:
                 f"CPU address 0x{address:04X} is outside PRG ROM range 0x8000-0xFFFF"
             )
 
-        prg_mode = (self.control >> 2) & 0x03
-        selected_bank = self.prg_bank & 0x0F
-        if prg_mode in (0, 1):
-            bank = (selected_bank & 0x0E) + ((address - 0x8000) // PRG_ROM_BANK_SIZE)
-        elif prg_mode == 2:
-            bank = 0 if address < 0xC000 else selected_bank
-        else:
-            bank = selected_bank if address < 0xC000 else self.prg_rom_banks - 1
-        return ((bank % self.prg_rom_banks) * PRG_ROM_BANK_SIZE) + (address & 0x3FFF)
+        lower, upper = _mmc1_prg_bases(
+            self.prg_rom_banks, (self.control >> 2) & 3, self.prg_bank & 0x0F
+        )
+        return (lower if address < 0xC000 else upper) + (address & 0x3FFF)
 
     def map_ppu_address(self, address: int) -> int:
         """Map a PPU CHR address into the cartridge CHR ROM/RAM buffer."""
@@ -211,6 +221,13 @@ class Cartridge:
 
     @property
     def mirroring(self) -> Mirroring:
+        if isinstance(self.mapper, Mapper1):
+            return (
+                Mirroring.SINGLE_SCREEN_LOWER,
+                Mirroring.SINGLE_SCREEN_UPPER,
+                Mirroring.VERTICAL,
+                Mirroring.HORIZONTAL,
+            )[self.mapper.control & 0x03]
         return self.header.mirroring
 
     @property

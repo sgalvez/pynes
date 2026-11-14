@@ -6,20 +6,19 @@ name: Release
   workflow_dispatch:
     inputs:
       tag_name:
-        description: Release tag to create or update, for example v0.0.1
+        description: Release tag to create or update, for example v1.1.0
         required: true
         type: string
       release_notes_path:
-        description: Release notes file to use
-        required: true
-        default: docs/releases/v0.0.1.md
+        description: Optional notes path; defaults to docs/releases/<tag>.md
+        required: false
         type: string
 permissions:
   contents: read
 env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
-  RELEASE_NOTES_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.release_notes_path || format('docs/releases/{0}.md',
-    github.ref_name) }}
+  RELEASE_NOTES_PATH: ${{ inputs.release_notes_path || format('docs/releases/{0}.md',
+    inputs.tag_name || github.ref_name) }}
 jobs:
   release:
     name: Build and test Python package
@@ -34,6 +33,25 @@ jobs:
       with:
         python-version: '3.11'
         cache: pip
+    - name: Verify release version and notes
+      run: |
+        python - <<'PY'
+        import os
+        import tomllib
+        from pathlib import Path
+
+        project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+        version = project["project"]["version"]
+        tag = os.environ["RELEASE_TAG"]
+        if tag != f"v{version}":
+            raise SystemExit(f"Release tag {tag!r} does not match project version {version!r}")
+        notes = Path(os.environ["RELEASE_NOTES_PATH"])
+        if not notes.is_file():
+            raise SystemExit(f"Release notes file does not exist: {notes}")
+        if f"Tag: `{tag}`" not in notes.read_text(encoding="utf-8"):
+            raise SystemExit(f"Release notes do not identify tag {tag!r}: {notes}")
+        print(f"Validated {tag} with {notes}")
+        PY
     - name: Install package
       run: |
         python -m pip install --upgrade pip

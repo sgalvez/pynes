@@ -7,7 +7,7 @@ from collections.abc import Sequence
 
 from .cartridge import CartridgeError
 from .logging_config import configure_logging
-from .settings import DEFAULT_SCALE
+from .settings import DEFAULT_INSTRUCTIONS_PER_FRAME, DEFAULT_SCALE
 from .version import get_version
 
 
@@ -30,10 +30,11 @@ def run_smoke_test(*args, **kwargs):
 def run_desktop(*args, **kwargs):
     from .app import DisplayUnavailableError as AppDisplayUnavailableError
     from .app import run_desktop as app_run_desktop
+    from .audio import AudioUnavailableError
 
     try:
         return app_run_desktop(*args, **kwargs)
-    except AppDisplayUnavailableError as exc:
+    except (AppDisplayUnavailableError, AudioUnavailableError) as exc:
         raise DisplayUnavailableError(str(exc)) from exc
 
 
@@ -52,13 +53,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--scale",
         type=int,
         default=DEFAULT_SCALE,
-        help=f"window scale factor (default: {DEFAULT_SCALE})",
+        help=f"positive window scale factor (default: {DEFAULT_SCALE})",
     )
     parser.add_argument(
         "--instructions-per-frame",
         type=int,
-        default=None,
-        help="CPU instructions to execute before drawing each frame; defaults to one emulated video frame",
+        default=DEFAULT_INSTRUCTIONS_PER_FRAME,
+        help="override PPU frame pacing with a positive fixed instruction count",
+    )
+    parser.add_argument(
+        "--audio-pilot",
+        action="store_true",
+        help="enable experimental NTSC five-channel audio in the desktop window",
     )
     parser.add_argument(
         "--trace",
@@ -78,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--smoke-test",
         type=int,
         metavar="INSTRUCTIONS",
-        help="load the ROM, step a fixed instruction count, print a summary, and exit",
+        help="load the ROM, step a non-negative instruction count, print a summary, and exit",
     )
     parser.add_argument(
         "--version",
@@ -98,6 +104,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the command-line interface."""
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.scale <= 0:
+        parser.error("--scale must be greater than zero")
+    if args.instructions_per_frame is not None and args.instructions_per_frame <= 0:
+        parser.error("--instructions-per-frame must be greater than zero")
+    if args.smoke_test is not None and args.smoke_test < 0:
+        parser.error("--smoke-test must be non-negative")
+    if args.audio_pilot and args.smoke_test is not None:
+        parser.error(
+            "--audio-pilot requires desktop mode; use scripts/apu_pilot.py for WAV export"
+        )
     configure_logging(verbose=args.verbose)
     if args.rom is None:
         parser.print_help()
@@ -133,6 +149,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             trace=args.trace,
             disassemble=args.disassemble,
             trace_file=args.trace_file,
+            audio_pilot=args.audio_pilot,
         )
     except (CartridgeError, DisplayUnavailableError) as exc:
         parser.exit(2, f"{exc}\n")

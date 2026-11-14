@@ -8,6 +8,7 @@ file before the tag is pushed.
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| [v1.1.0](v1.1.0.md) | Planned | Five-channel APU, scanline rendering, performance improvements, and emulator guide |
 | [v1.0.3](v1.0.3.md) | 2026-07-02 | Add APU music channel timing |
 | [v1.0.2](v1.0.2.md) | 2026-07-02 | Reduce metallic audio aliasing |
 | [v1.0.1](v1.0.1.md) | 2026-07-02 | Smooth overloaded frames and soften audio peaks |
@@ -24,6 +25,10 @@ file before the tag is pushed.
 
 - Update or add `docs/releases/vX.Y.Z.md`.
 - Confirm the release workflow can read that file through
-  `docs/releases/${{ github.ref_name }}.md`.
+  `docs/releases/<tag>.md`. Manual runs derive the path from `tag_name` unless
+  `release_notes_path` is explicitly provided.
+- Confirm the package version matches the tag and review the release's migration
+  notes and known limitations.
+- Merge the release preparation PR and validate the target commit on `main`.
 - Push the matching `vX.Y.Z` tag only after the release notes are present on
   the target commit.

@@ -20,6 +20,7 @@ from .ppu import PPU
 
 INTERNAL_RAM_SIZE = 2 * 1024
 PPU_REGISTER_COUNT = 8
+APU_IO_REGISTER_COUNT = 0x20
 
 
 class NESBusError(ValueError):
@@ -30,6 +31,7 @@ class NESBusError(ValueError):
 class HardwareRegisters:
     """Placeholder storage for hardware registers not implemented yet."""
 
+    apu_io: bytearray = field(default_factory=lambda: bytearray(APU_IO_REGISTER_COUNT))
     expansion: bytearray = field(default_factory=lambda: bytearray(0x4000))
 
 
@@ -39,12 +41,13 @@ class NESBus:
 
     cartridge: Cartridge
     ppu: PPU | None = None
-    apu: APU = field(default_factory=APU)
     controller1: Controller = field(default_factory=Controller)
     controller2: Controller = field(default_factory=Controller)
     ram: bytearray = field(default_factory=lambda: bytearray(INTERNAL_RAM_SIZE))
     registers: HardwareRegisters = field(default_factory=HardwareRegisters)
     open_bus: int = 0
+    dma_pending: bool = False
+    apu: APU | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         if self.ppu is None:
@@ -53,8 +56,12 @@ class NESBus:
     def read(self, address: int) -> int:
         """Read one byte from the CPU address space."""
         address &= 0xFFFF
-        if 0x0000 <= address <= 0x1FFF:
-            value = self.ram[address % INTERNAL_RAM_SIZE]
+        if address >= 0x8000:
+            value = self.cartridge.prg_rom[
+                self.cartridge.mapper.map_cpu_address(address)
+            ]
+        elif address <= 0x1FFF:
+            value = self.ram[address & (INTERNAL_RAM_SIZE - 1)]
         elif 0x2000 <= address <= 0x3FFF:
             assert self.ppu is not None
             value = self.ppu.read_register(address - 0x2000)
@@ -63,14 +70,19 @@ class NESBus:
                 value = self.controller1.read()
             elif address == 0x4017:
                 value = self.controller2.read()
+            elif address == 0x4015 and self.apu is not None:
+                # The internal status read does not drive the external data bus.
+                return self.apu.read_status() | (self.open_bus & 0x20)
+            elif self.apu is not None and address <= 0x4013:
+                value = self.open_bus
             else:
-                value = self.apu.read_register(address)
+                value = self.registers.apu_io[address - 0x4000]
         elif 0x4020 <= address <= 0x7FFF:
             value = self.registers.expansion[address - 0x4020]
-        elif 0x8000 <= address <= 0xFFFF:
-            value = self.cartridge.read_prg(address)
         else:
-            raise NESBusError(f"Address 0x{address:04X} is outside the CPU address space")
+            raise NESBusError(
+                f"Address 0x{address:04X} is outside the CPU address space"
+            )
 
         self.open_bus = value & 0xFF
         return self.open_bus
@@ -87,22 +99,26 @@ class NESBus:
             assert self.ppu is not None
             self.ppu.write_register(address - 0x2000, value)
         elif 0x4000 <= address <= 0x401F:
-            if address == 0x4016:
-                self.controller1.write_strobe(value)
-                self.controller2.write_strobe(value)
-            elif address == 0x4014:
+            if address == 0x4014:
                 assert self.ppu is not None
                 source = value << 8
                 for offset in range(256):
-                    self.ppu.oam[offset] = self.read(source + offset)
-            else:
+                    self.ppu.write_register(4, self.read(source + offset))
+                self.dma_pending = True
+            elif address == 0x4016:
+                self.controller1.write_strobe(value)
+                self.controller2.write_strobe(value)
+            elif self.apu is not None:
                 self.apu.write_register(address, value)
+            self.registers.apu_io[address - 0x4000] = value
         elif 0x4020 <= address <= 0x7FFF:
             self.registers.expansion[address - 0x4020] = value
         elif 0x8000 <= address <= 0xFFFF:
             self.cartridge.write_prg(address, value)
         else:
-            raise NESBusError(f"Address 0x{address:04X} is outside the CPU address space")
+            raise NESBusError(
+                f"Address 0x{address:04X} is outside the CPU address space"
+            )
 
 
 @dataclass
@@ -113,48 +129,87 @@ class NES:
     bus: NESBus = field(init=False)
     cpu: CPU6502 = field(init=False)
     ppu: PPU = field(init=False)
-    apu: APU = field(init=False)
     controller1: Controller = field(default_factory=Controller)
     controller2: Controller = field(default_factory=Controller)
     cpu_cycles: int = 0
     ppu_cycles: int = 0
     frame_cycles: int = 0
+    audio_sample_rate: int | None = field(default=None, kw_only=True)
+    apu: APU | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         self.ppu = PPU(self.cartridge)
-        self.apu = APU()
-        self.bus = NESBus(self.cartridge, self.ppu, self.apu, self.controller1, self.controller2)
+        if self.audio_sample_rate is not None:
+            self.apu = APU(self.audio_sample_rate)
+        self.bus = NESBus(
+            self.cartridge, self.ppu, self.controller1, self.controller2, apu=self.apu
+        )
         self.cpu = CPU6502(self.bus)
+        if self.apu is not None:
+            self.apu.dmc_reader = self.bus.read
+            self.apu.irq_callback = self.cpu.set_irq_line
         self.ppu.nmi_callback = self.cpu.nmi
         self.reset()
 
     @classmethod
-    def from_ines_rom(cls, data: bytes) -> NES:
+    def from_ines_rom(cls, data: bytes, *, audio_sample_rate: int | None = None) -> NES:
         """Create an NES instance from iNES ROM bytes."""
-        return cls(load_ines_rom(data))
+        return cls(load_ines_rom(data), audio_sample_rate=audio_sample_rate)
 
     @classmethod
-    def from_ines_file(cls, path: str | Path) -> NES:
+    def from_ines_file(
+        cls, path: str | Path, *, audio_sample_rate: int | None = None
+    ) -> NES:
         """Create an NES instance from an iNES ROM file path."""
-        return cls(load_ines_file(path))
+        return cls(load_ines_file(path), audio_sample_rate=audio_sample_rate)
 
     def reset(self) -> None:
-        """Reset CPU state and cycle counters."""
+        """Reset CPU/PPU state and synchronize cycle counters."""
         self.ppu.reset()
-        self.apu.reset()
+        if self.apu is not None:
+            self.apu.reset()
         self.cpu.reset()
+        self.bus.dma_pending = False
+        self.ppu.step(self.cpu.cycles * 3)
+        if self.apu is not None:
+            self.apu.step(self.cpu.cycles)
         self.cpu_cycles = self.cpu.cycles
         self.ppu_cycles = self.cpu_cycles * 3
-        self.frame_cycles = 0
+        self.frame_cycles = self.ppu.cycle
 
     def step(self) -> int:
-        """Execute one CPU instruction and advance placeholder timing."""
-        cycles = self.cpu.step()
-        self.cpu_cycles += cycles
-        ppu_cycles = cycles * 3
-        self.ppu.step(ppu_cycles)
-        self.ppu_cycles += ppu_cycles
+        """Execute an instruction/IRQ, accounting for OAM/DMC DMA and NMI cycles."""
+        before = self.cpu.cycles
+        apu = self.apu
+        self.cpu.step()
+        if self.bus.dma_pending:
+            self.cpu.cycles += 513 + (self.cpu.cycles & 1)
+            self.bus.dma_pending = False
+        advanced = 0
+        while advanced < self.cpu.cycles - before:
+            cycles = self.cpu.cycles - before - advanced
+            self.ppu.step(cycles * 3)
+            advanced += cycles
+            if apu is not None:
+                apu.cpu_cycles = before + advanced
+                if apu.cpu_cycles >= apu.next_cpu_event:
+                    apu.flush()
+                    self.cpu.cycles += apu.take_dma_stall_cycles()
+        self.cpu_cycles = self.cpu.cycles
+        self.ppu_cycles += advanced * 3
         self.frame_cycles = self.ppu.cycle
+        return advanced
+
+    def run_frame(
+        self, *, trace_callback: Callable[[CPU6502], None] | None = None
+    ) -> int:
+        """Execute until the PPU completes one frame and return elapsed CPU cycles."""
+        frame = self.ppu.frame
+        cycles = 0
+        while self.ppu.frame == frame:
+            if trace_callback is not None:
+                trace_callback(self.cpu)
+            cycles += self.step()
         return cycles
 
     def run(
@@ -163,7 +218,7 @@ class NES:
         *,
         trace_callback: Callable[[CPU6502], None] | None = None,
     ) -> int:
-        """Execute a fixed number of CPU instructions and return CPU cycles."""
+        """Execute a fixed number of instruction/IRQ steps and return CPU cycles."""
         if instruction_count < 0:
             raise ValueError("instruction_count must be non-negative")
 
@@ -173,38 +228,6 @@ class NES:
                 trace_callback(self.cpu)
             total += self.step()
         return total
-
-    def run_frame(
-        self,
-        *,
-        trace_callback: Callable[[CPU6502], None] | None = None,
-        max_instructions: int = 20_000,
-        render: bool = True,
-    ) -> tuple[int, bytes]:
-        """Run until the PPU advances one frame and return cycles plus audio."""
-        if max_instructions <= 0:
-            raise ValueError("max_instructions must be positive")
-
-        start_frame = self.ppu.frame
-        total_cycles = 0
-        audio = bytearray()
-        instructions = 0
-        cpu = self.cpu
-        apu = self.apu
-        ppu = self.ppu
-        while self.ppu.frame == start_frame and instructions < max_instructions:
-            if trace_callback is not None:
-                trace_callback(cpu)
-            cycles = cpu.step()
-            self.cpu_cycles += cycles
-            apu.generate_samples_into(cycles, audio)
-            ppu_cycles = cycles * 3
-            ppu.step(ppu_cycles, render=render)
-            self.ppu_cycles += ppu_cycles
-            self.frame_cycles = ppu.cycle
-            total_cycles += cycles
-            instructions += 1
-        return total_cycles, bytes(audio)
 
 
 if __name__ == "__main__":
