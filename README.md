@@ -56,10 +56,18 @@ Optional dependency groups in [pyproject.toml](pyproject.toml):
 
 ## Release Status
 
-- Base project version: `1.0.3` (experimental checkout)
+- Project version: `1.1.0` (release preparation; experimental emulator)
+- Release scope and migration: [v1.1.0 notes](docs/releases/v1.1.0.md).
 - Supported Python: Python 3.11+
 - CI matrix: Python 3.11 on Windows, Linux, and macOS.
 - Standalone release targets: Windows and Linux x86-64.
+
+This checkout prepares the next release after
+[v1.0.3, published on July 2, 2026](https://github.com/sgalvez/pynes/releases/tag/v1.0.3).
+It delivers the five-channel APU pilot, scanline rendering, performance
+optimizations, F3 diagnostics, and expanded documentation. Audio is enabled
+explicitly with `--audio-pilot`. Publishing requires the release tag after
+the preparation PR is merged and validated.
 
 ## Development Setup
 
@@ -152,6 +160,11 @@ The root `nes.py` is a launcher. The emulator implementation remains in
 **Emulador** workspace folder.
 
 ## Architecture
+
+For a detailed introduction with examples and diagrams, read
+[How a NES emulator works](docs/how-emulators-work.md). It explains the CPU,
+bus, cartridge, graphics, audio, controllers, and shared timing, then follows
+a button press through the current pynes implementation.
 
 ```mermaid
 flowchart LR
@@ -433,9 +446,9 @@ Continuous build versions use the base project version plus the GitHub Actions
 run number and commit SHA:
 
 ```text
-Commit build version: 1.0.3.dev42+gabc1234
-Formal release version: 1.0.3
-Formal release tag: v1.0.3
+Commit build version: 1.1.0.dev42+gabc1234
+Formal release version: 1.1.0
+Formal release tag: v1.1.0
 ```
 
 Each continuous build uploads:
@@ -465,12 +478,14 @@ the GitHub Release:
 chmod +x ./nes-py-linux-x86_64
 ./nes-py-linux-x86_64 --help
 ./nes-py-linux-x86_64 path/to/game.nes
+./nes-py-linux-x86_64 path/to/game.nes --audio-pilot
 ```
 
 ```powershell
 # Windows PowerShell
 .\nes-py-windows-x86_64.exe --help
 .\nes-py-windows-x86_64.exe path\to\game.nes
+.\nes-py-windows-x86_64.exe path\to\game.nes --audio-pilot
 ```
 
 The standalone executable bundles Python and the project dependencies, so you do
@@ -488,7 +503,7 @@ If you prefer installing the Python package, download the wheel from the GitHub
 Release, then install it with:
 
 ```bash
-python -m pip install pynes-1.0.3-py3-none-any.whl
+python -m pip install pynes-1.1.0-py3-none-any.whl
 ```
 
 Verify the installed CLI:
@@ -504,14 +519,14 @@ nes-py --version
 
 Before tagging a release, update the version in `pyproject.toml`, add matching
 notes under `docs/releases/v<version>.md`, and run tests, linting, and a package
-build. Maintainers then publish a matching version tag, for example for a future
-`1.0.4` release:
+build. After the release preparation PR is merged and checks pass on `main`,
+maintainers publish the matching version tag. For this `1.1.0` release:
 
 ```bash
 git checkout main
-git pull
-git tag v1.0.4
-git push origin v1.0.4
+git pull --ff-only
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
 Maintainers can also run the release from GitHub:
@@ -520,8 +535,10 @@ Maintainers can also run the release from GitHub:
 Actions -> Release -> Run workflow
 ```
 
-Set `tag_name` to the release tag, for example `v1.0.4`, and keep
-`release_notes_path` pointed at the matching notes file.
+Select the validated release commit, set `tag_name` to `v1.1.0`, and leave
+`release_notes_path` blank to use `docs/releases/v1.1.0.md`. An explicit notes
+path is also supported. The workflow checks that the tag matches the project
+version and that the selected notes identify that tag before building.
 
 Pushing the tag or running the workflow manually triggers the release workflow.
 The workflow installs the project, runs tests and linting, builds the source
@@ -543,6 +560,7 @@ Version tag  -> formal GitHub Release
 |-- nes.py
 |-- pynes.code-workspace
 |-- README.md
+|-- MANIFEST.in
 |-- pyproject.toml
 |-- .gitignore
 |-- .github/
@@ -551,6 +569,7 @@ Version tag  -> formal GitHub Release
 |       |-- continuous-build.yml
 |       `-- release.yml
 |-- docs/
+|   |-- how-emulators-work.md
 |   |-- apu/
 |   |   |-- dmc.md
 |   |   |-- overview.es.md
@@ -564,7 +583,8 @@ Version tag  -> formal GitHub Release
 |       |-- v1.0.0.md
 |       |-- v1.0.1.md
 |       |-- v1.0.2.md
-|       `-- v1.0.3.md
+|       |-- v1.0.3.md
+|       `-- v1.1.0.md
 |-- scripts/
 |   |-- apu_pilot.py
 |   |-- build_standalone.py
