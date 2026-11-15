@@ -75,6 +75,7 @@ flowchart TD
     PPU <-->|"CHR access and mirroring"| Cartridge
     APU -->|"DMC memory reads"| Bus
     PPU -->|"NMI"| CPU
+    Cartridge -->|"MMC5 mapper IRQ"| CPU
     APU -->|"IRQ"| CPU
     Clock -->|"execute and count cycles"| CPU
     Clock -->|"advance graphics time"| PPU
@@ -114,12 +115,18 @@ same address return a byte from a different PRG bank. CHR bank selection and
 nametable mirroring can similarly change what the PPU sees. Correct rendering
 therefore depends on the cartridge model as well as the graphics code.
 
-pynes implements basic NROM (mapper 0), MMC1 (mapper 1), and UxROM (mapper 2)
-support in [cartridge.py](../src/nes_py/cartridge.py). Supporting these mapper
+pynes implements basic NROM (mapper 0), MMC1 (mapper 1), UxROM (mapper 2), and
+experimental MMC5 (mapper 5) support through
+[cartridge.py](../src/nes_py/cartridge.py). Supporting these mapper
 numbers does not cover every board variation or cartridge feature. The loader
 also reads a basic subset of NES 2.0, which extends the header with explicit
 hardware information. See [cartridge formats](cartridge-formats.md) for the
 supported combinations. Battery-backed save persistence is not implemented.
+
+MMC5 illustrates how much a cartridge can add to the machine: it supplies
+banked RAM, per-tile background attributes, different CHR banks for rendering
+contexts, a multiplier, and a scanline interrupt. Its current implementation
+is explained in the [MMC5 guide](mappers/mmc5.md).
 
 ## CPU: executing instructions
 
@@ -188,15 +195,17 @@ This is the main routing implemented by `NESBus` in
 | `$4016` | Controller strobe on writes; controller 1 serial input on reads |
 | `$4017` | APU frame-sequencer control on writes; controller 2 input on reads |
 | `$4020`–`$7FFF` | Expansion/cartridge RAM area; behavior depends on the format and declared RAM |
-| `$8000`–`$FFFF` | Cartridge PRG reads and mapper writes |
+| `$8000`–`$FFFF` | Cartridge PRG ROM/RAM windows and mapper writes |
 
 The [NESdev CPU memory map](https://www.nesdev.org/wiki/CPU_memory_map)
 describes the hardware address regions; the table above describes this
 implementation's routing and its limitations.
 
-For supported NES 2.0 boards, 8 KiB of PRG RAM is mapped at `$6000`–`$7FFF`
+For supported NROM/MMC1 NES 2.0 boards, 8 KiB of PRG RAM is mapped at `$6000`–`$7FFF`
 only when declared. Absent RAM and unused expansion addresses return the last
 bus value. Legacy iNES keeps its earlier placeholder expansion storage.
+MMC5 has its own registers and extended RAM within `$5000`–`$5FFF`, plus
+banked PRG RAM that can also occupy parts of `$8000`–`$DFFF`.
 
 **Mirroring** means multiple addresses select the same underlying storage. The
 2 KiB RAM occupies `$0000`–`$07FF`; `$0800`–`$0FFF` repeats it, as do two more
@@ -393,7 +402,9 @@ and some related hardware quirks remain incomplete.
 
 An **interrupt** redirects the CPU to a handler in the game program. NMI is the
 PPU's non-maskable notification, commonly used for vblank. IRQ is a maskable
-request; the APU's frame sequencer and DMC can assert it. The core preserves the
+request; the APU's frame sequencer, DMC, and MMC5 scanline counter can assert it.
+The CPU receives the combined level, so acknowledging one device leaves another
+device's pending request active. The core preserves the
 CPU's return state on the stack and loads the relevant interrupt vector.
 Acknowledging an APU interrupt source is distinct from merely entering its CPU
 handler.
@@ -525,6 +536,7 @@ Start with the coordinator, then follow the device that interests you:
 | [src/nes_py/nes.py](../src/nes_py/nes.py) | Device construction, `NESBus`, `NES.step()`, and `NES.run_frame()` |
 | [src/nes_py/cpu.py](../src/nes_py/cpu.py) | Registers, opcode dispatch, addressing, flags, interrupts, and cycle costs |
 | [src/nes_py/cartridge.py](../src/nes_py/cartridge.py) | iNES loading, PRG/CHR storage, bank switching, and mirroring |
+| [src/nes_py/mmc5.py](../src/nes_py/mmc5.py) | MMC5 RAM/ROM windows, graphics contexts, extended RAM, and mapper IRQs |
 | [src/nes_py/ppu.py](../src/nes_py/ppu.py) | PPU registers, scroll state, scanlines, sprites, palettes, and RGB output |
 | [src/nes_py/apu.py](../src/nes_py/apu.py) | Channel state, event scheduling, DMC, mixing, and PCM generation |
 | [src/nes_py/input.py](../src/nes_py/input.py) | Button latching and serial controller reads |

@@ -23,8 +23,10 @@ contain fewer features; consult their corresponding [release notes](docs/release
 
 ## Implemented Features
 
-- iNES and basic NES 2.0 ROM loading for NROM (0), MMC1 (1), and UxROM (2).
+- iNES and basic NES 2.0 ROM loading for NROM (0), MMC1 (1), UxROM (2), and MMC5 (5).
   See [cartridge formats](docs/cartridge-formats.md) for supported layouts.
+- An experimental [MMC5 pilot](docs/mappers/mmc5.md) with banked PRG RAM,
+  separate CHR contexts, extended attributes, nametable routing, and scanline IRQs.
 - A 6502 CPU core implementing the official opcodes, RAM mirroring, and a CPU
   memory bus with mapped PPU and controller registers.
 - Scanline-based backgrounds with pattern tables, attributes, palettes,
@@ -177,6 +179,7 @@ flowchart LR
     CPU --> Bus["nes.py: NESBus"]
     Bus --> PPU["ppu.py: scanline rendering"]
     Bus --> Cartridge["cartridge.py: ROM and mapper"]
+    Cartridge -->|"MMC5 IRQ"| CPU
     Bus --> Input["input.py: controllers"]
     Bus --> APU["apu.py: five-channel APU pilot"]
     APU -->|"DMC reads"| Bus
@@ -297,6 +300,9 @@ out of commits and release artifacts.
 ## Current Limitations
 
 - Mapper support is incomplete.
+- MMC5 expansion audio, vertical-split rendering, MMC5A behavior, and save-file
+  persistence are pending. Cartridge RAM is retained during reset, but is not
+  saved to disk when the application exits.
 - PPU behavior is incomplete and not cycle-accurate.
 - Rendering uses scanline snapshots; changes within a scanline, color emphasis,
   odd-frame dot skipping, and the hardware sprite-overflow bug are not emulated.
@@ -575,6 +581,8 @@ Version tag  -> formal GitHub Release
 |-- docs/
 |   |-- cartridge-formats.md
 |   |-- how-emulators-work.md
+|   |-- mappers/
+|   |   `-- mmc5.md
 |   |-- apu/
 |   |   |-- dmc.md
 |   |   |-- overview.es.md
@@ -612,6 +620,7 @@ Version tag  -> formal GitHub Release
 |       |-- debug.py
 |       |-- input.py
 |       |-- logging_config.py
+|       |-- mmc5.py
 |       |-- nes.py
 |       |-- ppu.py
 |       |-- settings.py
@@ -628,6 +637,7 @@ Version tag  -> formal GitHub Release
     |-- test_cpu.py
     |-- test_debug.py
     |-- test_direct_script.py
+    |-- test_mmc5.py
     |-- test_nes.py
     |-- test_ppu.py
     |-- test_release_docs.py

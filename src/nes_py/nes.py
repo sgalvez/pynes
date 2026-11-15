@@ -16,6 +16,7 @@ from .apu import APU
 from .cartridge import Cartridge, load_ines_file, load_ines_rom
 from .cpu import CPU6502
 from .input import Controller
+from .mmc5 import Mapper5
 from .ppu import PPU
 
 INTERNAL_RAM_SIZE = 2 * 1024
@@ -132,6 +133,46 @@ class NESBus:
 
 
 @dataclass
+class MMC5Bus(NESBus):
+    """Route MMC5 registers and RAM/ROM windows without slowing other buses."""
+
+    mmc5: Mapper5 = field(init=False)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        assert isinstance(self.cartridge.mapper, Mapper5)
+        self.mmc5 = self.cartridge.mapper
+
+    def read(self, address: int) -> int:
+        address &= 0xFFFF
+        if address >= 0x8000:
+            mapper = self.mmc5
+            if 0xFFFA <= address <= 0xFFFB:
+                mapper.end_frame(clear_irq=True)
+            # Mapper writes refresh these decoded windows. Read their backing
+            # buffers here to avoid another Python call on each opcode fetch.
+            storage, base = mapper._prg_pages[(address - 0x8000) >> 13]
+            if storage is not None:
+                self.open_bus = storage[base + (address & 0x1FFF)]
+            return self.open_bus
+        if address >= 0x4020:
+            self.open_bus = self.mmc5.read_cpu(address, self.open_bus) & 0xFF
+            return self.open_bus
+        if address <= 0x1FFF:
+            self.open_bus = self.ram[address & 0x7FF]
+            return self.open_bus
+        return super().read(address)
+
+    def write(self, address: int, value: int) -> None:
+        address &= 0xFFFF
+        if address >= 0x4020:
+            self.open_bus = value & 0xFF
+            self.mmc5.write_cpu(address, self.open_bus)
+        else:
+            super().write(address, value)
+
+
+@dataclass
 class NES:
     """Minimal NES system wrapper around a cartridge, CPU bus, and CPU."""
 
@@ -151,13 +192,17 @@ class NES:
         self.ppu = PPU(self.cartridge)
         if self.audio_sample_rate is not None:
             self.apu = APU(self.audio_sample_rate)
-        self.bus = NESBus(
+        mmc5 = isinstance(self.cartridge.mapper, Mapper5)
+        bus_type = MMC5Bus if mmc5 else NESBus
+        self.bus = bus_type(
             self.cartridge, self.ppu, self.controller1, self.controller2, apu=self.apu
         )
         self.cpu = CPU6502(self.bus)
         if self.apu is not None:
             self.apu.dmc_reader = self.bus.read
-            self.apu.irq_callback = self.cpu.set_irq_line
+            self.apu.irq_callback = self._update_irq_line if mmc5 else self.cpu.set_irq_line
+        if mmc5:
+            self.cartridge.mapper.irq_callback = self._update_irq_line
         self.ppu.nmi_callback = self.cpu.nmi
         self.reset()
 
@@ -175,6 +220,8 @@ class NES:
 
     def reset(self) -> None:
         """Reset CPU/PPU state and synchronize cycle counters."""
+        if isinstance(self.cartridge.mapper, Mapper5):
+            self.cartridge.mapper.reset()
         self.ppu.reset()
         if self.apu is not None:
             self.apu.reset()
@@ -186,6 +233,13 @@ class NES:
         self.cpu_cycles = self.cpu.cycles
         self.ppu_cycles = self.cpu_cycles * 3
         self.frame_cycles = self.ppu.cycle
+
+    def _update_irq_line(self, _asserted: bool) -> None:
+        """APU and cartridge IRQ sources share one level-sensitive CPU input."""
+        mapper = self.cartridge.mapper
+        mapper_irq = isinstance(mapper, Mapper5) and mapper.irq_asserted
+        apu_irq = self.apu is not None and self.apu.irq_asserted
+        self.cpu.set_irq_line(mapper_irq or apu_irq)
 
     def step(self) -> int:
         """Execute an instruction/IRQ, accounting for OAM/DMC DMA and NMI cycles."""

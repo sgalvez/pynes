@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 
 from .cartridge import Cartridge, Mirroring
+from .mmc5 import Mapper5
 
 SCREEN_WIDTH = 256
 SCREEN_HEIGHT = 240
@@ -102,6 +103,7 @@ NAMETABLE_PAGES = {
     Mirroring.SINGLE_SCREEN_LOWER: (0, 0, 0, 0),
     Mirroring.SINGLE_SCREEN_UPPER: (1024, 1024, 1024, 1024),
 }
+EXRAM_PALETTE_TABLE = bytes(value >> 6 for value in range(256))
 
 
 @lru_cache(maxsize=8192)
@@ -224,8 +226,11 @@ class PPU:
     _read_buffer: int = 0
     _next_event_cycle: int = 1
     _sprite_zero_hit_cycle: int = PPU_CYCLES_PER_FRAME + 1
+    _mmc5: Mapper5 | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if isinstance(self.cartridge.mapper, Mapper5):
+            self._mmc5 = self.cartridge.mapper
         if self.cartridge.mirroring is Mirroring.FOUR_SCREEN:
             self.nametable.extend(bytes(4 * 1024 - len(self.nametable)))
 
@@ -245,6 +250,9 @@ class PPU:
 
     def reset(self) -> None:
         """Reset registers, timing, and the displayed image."""
+        if self._mmc5 is not None:
+            self._mmc5.set_ppu_mask(0)
+            self._mmc5.sprite_16 = False
         self.ctrl = self.mask = self.status = self.oamaddr = 0
         self.vram_address = self._temp_address = self._fine_x = 0
         self.scroll_x = self.scroll_y = 0
@@ -294,11 +302,15 @@ class PPU:
         if register == 0:
             was_enabled = self.nmi_enabled
             self.ctrl = value
+            if self._mmc5 is not None:
+                self._mmc5.sprite_16 = bool(value & 0x20)
             self._temp_address = (self._temp_address & ~0x0C00) | ((value & 3) << 10)
             if self.vblank and self.nmi_enabled and not was_enabled:
                 self._trigger_nmi()
         elif register == 1:
             self.mask = value
+            if self._mmc5 is not None:
+                self._mmc5.set_ppu_mask(value)
         elif register == 3:
             self.oamaddr = value
         elif register == 4:
@@ -335,6 +347,8 @@ class PPU:
         if address < 0x2000:
             return self.cartridge.read_chr(address)
         if address < 0x3F00:
+            if self._mmc5 is not None:
+                return self._mmc5.read_nametable(address, self.nametable)
             return self.nametable[self._nametable_index(address)]
         return self.palette[self._palette_index(address)]
 
@@ -344,7 +358,10 @@ class PPU:
         if address < 0x2000:
             self.cartridge.write_chr(address, value)
         elif address < 0x3F00:
-            self.nametable[self._nametable_index(address)] = value
+            if self._mmc5 is not None:
+                self._mmc5.write_nametable(address, value, self.nametable)
+            else:
+                self.nametable[self._nametable_index(address)] = value
         else:
             self.palette[self._palette_index(address)] = value & 0x3F
 
@@ -373,6 +390,12 @@ class PPU:
                         )
                     if overflow:
                         self.status |= 0x20
+                    self._next_event_cycle = scanline * PPU_CYCLES_PER_SCANLINE + (
+                        4 if self._mmc5 is not None else 257
+                    )
+                elif dot == 4 and self._mmc5 is not None:
+                    self._mmc5.set_ppu_mask(self.mask)
+                    self._mmc5.clock_scanline()
                     self._next_event_cycle = scanline * PPU_CYCLES_PER_SCANLINE + 257
                 else:
                     if self.mask & 0x18:
@@ -383,8 +406,15 @@ class PPU:
                     self._next_event_cycle = (
                         (scanline + 1) * PPU_CYCLES_PER_SCANLINE + 1
                         if scanline + 1 < SCREEN_HEIGHT
-                        else VBLANK_START_CYCLE + 1
+                        else (
+                            SCREEN_HEIGHT * PPU_CYCLES_PER_SCANLINE + 9
+                            if self._mmc5 is not None
+                            else VBLANK_START_CYCLE + 1
+                        )
                     )
+            elif scanline == SCREEN_HEIGHT and self._mmc5 is not None:
+                self._mmc5.end_frame()
+                self._next_event_cycle = VBLANK_START_CYCLE + 1
             elif scanline == VBLANK_START_SCANLINE:
                 self._present_frame()
                 self.enter_vblank()
@@ -437,7 +467,14 @@ class PPU:
         tables = _palette_tables(bytes(self.palette), bool(self.mask & 1))
         chr_data = self.cartridge.chr_data
         map_chr = self.cartridge.mapper.map_ppu_address
-        if self.mask & 0x08:
+        if self._mmc5 is not None:
+            self._mmc5.sprite_16 = bool(self.ctrl & 0x20)
+        if self.mask & 0x08 and self._mmc5 is not None:
+            background, pixels = self._render_mmc5_background(address, tables)
+            if not self.mask & 0x02:
+                pixels[:8] = bytes([tables[0][0]]) * 8
+                background = bytes(8) + background[8:]
+        elif self.mask & 0x08:
             nametable = self.nametable
             pages = NAMETABLE_PAGES[self.cartridge.mirroring]
             table = (address >> 10) & 3
@@ -493,7 +530,11 @@ class PPU:
             indices = _sprite_scanlines(bytes(self.oam), height)[y]
             overflow = len(indices) > 8
             claimed = bytearray(SCREEN_WIDTH)
-            chr_bases = (map_chr(0), map_chr(0x1000))
+            chr_bases = (
+                (0, 0x1000)
+                if self._mmc5 is not None
+                else (map_chr(0), map_chr(0x1000))
+            )
             for index in indices[:8]:
                 top = self.oam[index] + 1
                 tile, attributes, left = self.oam[index + 1 : index + 4]
@@ -508,6 +549,8 @@ class PPU:
                     )
                 else:
                     pattern = chr_bases[1 if self.ctrl & 8 else 0] + tile * 16 + row_y
+                if self._mmc5 is not None:
+                    pattern = self._mmc5.map_render_address(pattern, background=False)
                 row = _sprite_pixels(
                     chr_data[pattern], chr_data[pattern + 8], bool(attributes & 0x40)
                 )
@@ -527,6 +570,64 @@ class PPU:
                         pixels[x] = colors[color]
         self._pixels[y * SCREEN_WIDTH : (y + 1) * SCREEN_WIDTH] = pixels
         return hit, overflow
+
+    def _render_mmc5_background(
+        self, address: int, tables: tuple[bytes, ...]
+    ) -> tuple[bytes, bytearray]:
+        """Fetch MMC5's per-tile attributes and 1 KiB CHR mappings as a strip."""
+        mapper = self._mmc5
+        assert mapper is not None
+        chr_data = self.cartridge.chr_data
+        first_table = (address >> 10) & 3
+        tile_y = (address >> 5) & 31
+        fine_y = (address >> 12) & 7
+        coarse_x = address & 31
+        pattern_base = 0x1000 if self.ctrl & 0x10 else 0
+        first, first_base = mapper.nametable_page(first_table, self.nametable)
+        second, second_base = mapper.nametable_page(first_table ^ 1, self.nametable)
+        row = tile_y * 32
+        end = coarse_x + 32 + bool(self._fine_x)
+        tiles = (
+            bytes(first[first_base + row : first_base + row + 32])
+            + bytes(second[second_base + row : second_base + row + 32])
+        )[coarse_x:end]
+        if mapper.exram_mode == 1:
+            # Extended attributes mirror across nametables. Snapshot a row,
+            # then resolve its tile banks while preserving fresh pattern data.
+            attributes = (bytes(mapper.exram[row : row + 32]) * 2)[coarse_x:end]
+            low, high = bytearray(), bytearray()
+            for tile, attribute in zip(tiles, attributes):
+                bank = (mapper.chr_upper << 6) | (attribute & 0x3F)
+                pattern = (bank * 0x1000 + tile * 16 + fine_y) % len(chr_data)
+                low.append(chr_data[pattern])
+                high.append(chr_data[pattern + 8])
+            palettes = attributes.translate(EXRAM_PALETTE_TABLE)
+        else:
+            attribute_row = 0x3C0 + (tile_y // 4) * 8
+            shift_y = (tile_y & 2) << 1
+            palettes = (
+                _attribute_palettes(
+                    bytes(first[first_base + attribute_row : first_base + attribute_row + 8]),
+                    shift_y,
+                )
+                + _attribute_palettes(
+                    bytes(second[second_base + attribute_row : second_base + attribute_row + 8]),
+                    shift_y,
+                )
+            )[coarse_x:end]
+            pages = mapper.render_chr_pages(background=True)
+            page = 4 if pattern_base else 0
+            bases = pages[page : page + 4]
+            low_table = b"".join(
+                chr_data[base + fine_y : base + 0x400 : 16] for base in bases
+            )
+            high_table = b"".join(
+                chr_data[base + fine_y + 8 : base + 0x400 : 16] for base in bases
+            )
+            low, high = tiles.translate(low_table), tiles.translate(high_table)
+        raw, colors = _background_strip(bytes(low), bytes(high), bytes(palettes), tables[:4])
+        start = self._fine_x
+        return raw[start : start + SCREEN_WIDTH], bytearray(colors[start : start + SCREEN_WIDTH])
 
     def _present_frame(self) -> None:
         self._display_pixels = bytes(self._pixels)
