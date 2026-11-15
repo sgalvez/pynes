@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "rom",
         nargs="?",
-        help="path to an iNES .nes ROM file",
+        help="path to an iNES or supported NES 2.0 .nes ROM file",
     )
     parser.add_argument(
         "--scale",

@@ -116,8 +116,10 @@ therefore depends on the cartridge model as well as the graphics code.
 
 pynes implements basic NROM (mapper 0), MMC1 (mapper 1), and UxROM (mapper 2)
 support in [cartridge.py](../src/nes_py/cartridge.py). Supporting these mapper
-numbers does not cover every board variation or cartridge feature. NES 2.0 and
-battery-backed save persistence are not implemented.
+numbers does not cover every board variation or cartridge feature. The loader
+also reads a basic subset of NES 2.0, which extends the header with explicit
+hardware information. See [cartridge formats](cartridge-formats.md) for the
+supported combinations. Battery-backed save persistence is not implemented.
 
 ## CPU: executing instructions
 
@@ -185,12 +187,16 @@ This is the main routing implemented by `NESBus` in
 | `$4015` | APU enable control on writes; channel and interrupt status on reads |
 | `$4016` | Controller strobe on writes; controller 1 serial input on reads |
 | `$4017` | APU frame-sequencer control on writes; controller 2 input on reads |
-| `$4020`–`$7FFF` | Placeholder expansion storage; cartridge RAM behavior is incomplete |
+| `$4020`–`$7FFF` | Expansion/cartridge RAM area; behavior depends on the format and declared RAM |
 | `$8000`–`$FFFF` | Cartridge PRG reads and mapper writes |
 
 The [NESdev CPU memory map](https://www.nesdev.org/wiki/CPU_memory_map)
 describes the hardware address regions; the table above describes this
 implementation's routing and its limitations.
+
+For supported NES 2.0 boards, 8 KiB of PRG RAM is mapped at `$6000`–`$7FFF`
+only when declared. Absent RAM and unused expansion addresses return the last
+bus value. Legacy iNES keeps its earlier placeholder expansion storage.
 
 **Mirroring** means multiple addresses select the same underlying storage. The
 2 KiB RAM occupies `$0000`–`$07FF`; `$0800`–`$0FFF` repeats it, as do two more

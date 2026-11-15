@@ -78,7 +78,13 @@ class NESBus:
             else:
                 value = self.registers.apu_io[address - 0x4000]
         elif 0x4020 <= address <= 0x7FFF:
-            value = self.registers.expansion[address - 0x4020]
+            header = self.cartridge.header
+            if header.format_version == 1 or (
+                address >= 0x6000 and header.prg_ram_size
+            ):
+                value = self.registers.expansion[address - 0x4020]
+            else:
+                value = self.open_bus
         else:
             raise NESBusError(
                 f"Address 0x{address:04X} is outside the CPU address space"
@@ -112,7 +118,11 @@ class NESBus:
                 self.apu.write_register(address, value)
             self.registers.apu_io[address - 0x4000] = value
         elif 0x4020 <= address <= 0x7FFF:
-            self.registers.expansion[address - 0x4020] = value
+            header = self.cartridge.header
+            if header.format_version == 1 or (
+                address >= 0x6000 and header.prg_ram_size
+            ):
+                self.registers.expansion[address - 0x4020] = value
         elif 0x8000 <= address <= 0xFFFF:
             self.cartridge.write_prg(address, value)
         else:
