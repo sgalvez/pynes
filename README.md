@@ -23,7 +23,8 @@ contain fewer features; consult their corresponding [release notes](docs/release
 
 ## Implemented Features
 
-- iNES ROM loading and basic mapper support: NROM (0), MMC1 (1), and UxROM (2).
+- iNES and basic NES 2.0 ROM loading for NROM (0), MMC1 (1), and UxROM (2).
+  See [cartridge formats](docs/cartridge-formats.md) for supported layouts.
 - A 6502 CPU core implementing the official opcodes, RAM mirroring, and a CPU
   memory bus with mapped PPU and controller registers.
 - Scanline-based backgrounds with pattern tables, attributes, palettes,
@@ -303,7 +304,9 @@ out of commits and release artifacts.
   interrupt collision timing, expansion audio, band-limited resampling, the
   full analog filter response, and audio-device clock feedback are pending.
 - Input supports one keyboard-backed controller.
-- NES 2.0 files and unsupported mappers are rejected by the loader.
+- NES 2.0 support covers standard NTSC/multiple-region boards on the supported
+  mappers. Unsupported submappers, memory layouts, console types, and peripherals
+  are rejected with specific errors; see [cartridge formats](docs/cartridge-formats.md).
 - Unofficial CPU opcodes, save states, battery-backed save persistence, and
   complete interrupt/APU behavior are not implemented.
 
@@ -395,6 +398,7 @@ line per instruction and can substantially reduce throughput.
 |---|---|
 | `pygame is required` | Install `python -m pip install -e ".[display]"` in the active environment. |
 | `No module named nes_py` | Install the package in editable mode or use `python nes.py` from the repository root. |
+| A NES 2.0 ROM will not load | Check the reported mapper, submapper, and hardware requirement against [cartridge format support](docs/cartridge-formats.md). The file format alone does not determine game compatibility. |
 | Black or incorrect graphics | Confirm the ROM's mapper is supported and compare against the known PPU limitations; record a trace or headless result. |
 | Slow or uneven playback | Disable tracing, use automatic frame pacing, and benchmark the local ROM; a smaller `--scale` can reduce display work. |
 | Unsupported mapper, format, or opcode | Record the exact error and ROM metadata when reporting the issue; that behavior requires additional emulator support. |
@@ -569,6 +573,7 @@ Version tag  -> formal GitHub Release
 |       |-- continuous-build.yml
 |       `-- release.yml
 |-- docs/
+|   |-- cartridge-formats.md
 |   |-- how-emulators-work.md
 |   |-- apu/
 |   |   |-- dmc.md
