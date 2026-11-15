@@ -7,6 +7,8 @@ from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 
+from .mmc5 import Mapper5
+
 INES_MAGIC = b"NES\x1a"
 INES_HEADER_SIZE = 16
 PRG_ROM_BANK_SIZE = 16 * 1024
@@ -225,7 +227,7 @@ class Cartridge:
     header: INESHeader
     prg_rom: bytes
     chr_data: bytearray
-    mapper: Mapper0 | Mapper1 | Mapper2
+    mapper: Mapper0 | Mapper1 | Mapper2 | Mapper5
 
     @property
     def mapper_number(self) -> int:
@@ -248,10 +250,15 @@ class Cartridge:
 
     def read_prg(self, address: int) -> int:
         """Read a byte from CPU-visible PRG ROM."""
+        if isinstance(self.mapper, Mapper5):
+            return self.mapper.read_cpu(address)
         return self.prg_rom[self.mapper.map_cpu_address(address)]
 
     def write_prg(self, address: int, value: int) -> None:
         """Write a byte to CPU-visible cartridge space."""
+        if isinstance(self.mapper, Mapper5):
+            self.mapper.write_cpu(address, value)
+            return
         if isinstance(self.mapper, Mapper2) and self.mapper.bus_conflicts:
             # Sample ROM using the old bank: both chips drive the data bus
             # during this write, before the bank register latches the AND.
@@ -368,6 +375,10 @@ def _validate_nes2_hardware(header: INESHeader) -> None:
         raise CartridgeError("NES 2.0 miscellaneous ROMs are not supported")
     if header.expansion_device not in (0, 1):
         raise CartridgeError("Unsupported NES 2.0 expansion device; standard controllers only")
+    if header.mapper_number == 5:
+        # MMC5 owns banked RAM, including memory marked battery backed. Its
+        # layout is checked below; persistence is separate from RAM emulation.
+        return
     if header.prg_nvram_size or header.chr_nvram_size:
         raise CartridgeError("NES 2.0 nonvolatile cartridge RAM is not supported")
     if header.prg_ram_size not in (0, PRG_RAM_SIZE):
@@ -396,7 +407,7 @@ def load_ines_rom(data: bytes) -> Cartridge:
                 "Invalid Mapper 0 ROM: expected 1 or 2 PRG ROM banks, "
                 f"got {header.prg_rom_banks}. The ROM header may declare the wrong mapper."
             )
-        mapper: Mapper0 | Mapper1 | Mapper2 = Mapper0(
+        mapper: Mapper0 | Mapper1 | Mapper2 | Mapper5 | None = Mapper0(
             prg_rom_size=header.prg_rom_size,
             has_chr_ram=header.chr_rom_banks == 0,
         )
@@ -420,9 +431,24 @@ def load_ines_rom(data: bytes) -> Cartridge:
             # iNES keeps its prior behavior and submapper 1 explicitly has none.
             bus_conflicts=header.format_version == 2 and header.submapper_number != 1,
         )
+    elif header.mapper_number == 5:
+        if not 1 <= header.prg_rom_banks <= 64:
+            raise CartridgeError("MMC5 requires 16 KiB to 1 MiB of PRG ROM")
+        if header.chr_rom_banks > 128:
+            raise CartridgeError("MMC5 supports at most 1 MiB of CHR ROM")
+        if header.chr_nvram_size or (
+            header.chr_ram_size != (0 if header.chr_rom_banks else CHR_RAM_SIZE)
+        ):
+            raise CartridgeError("Supported MMC5 CHR layouts are ROM or 8 KiB volatile RAM")
+        ram_size = header.prg_ram_size + header.prg_nvram_size
+        if ram_size not in (0, 0x2000, 0x4000, 0x8000, 0x10000) or (
+            header.prg_ram_size % PRG_RAM_SIZE or header.prg_nvram_size % PRG_RAM_SIZE
+        ):
+            raise CartridgeError("Supported MMC5 PRG RAM sizes are 0, 8, 16, 32, or 64 KiB")
+        mapper = None  # Construct MMC5 after validating/extracting its ROM data.
     else:
         raise CartridgeError(
-            f"Unsupported mapper {header.mapper_number}; supported mappers: 0, 1, 2"
+            f"Unsupported mapper {header.mapper_number}; supported mappers: 0, 1, 2, 5"
         )
 
     _validate_nes2_hardware(header)
@@ -440,6 +466,12 @@ def load_ines_rom(data: bytes) -> Cartridge:
         if header.chr_rom_banks == 0
         else bytearray(data[chr_start:expected_size])
     )
+    if mapper is None:
+        mapper = Mapper5(
+            prg_rom,
+            len(chr_data),
+            header.prg_ram_size + header.prg_nvram_size,
+        )
 
     return Cartridge(
         header=header,

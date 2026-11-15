@@ -12,15 +12,21 @@ audio, mapper, and timing behavior the game uses.
 
 ## Supported NES 2.0 boards
 
-| Mapper | Submappers | PRG ROM | CHR memory | Volatile PRG RAM |
+| Mapper | Submappers | PRG ROM | CHR memory | PRG RAM |
 |---|---|---|---|---|
 | NROM (0) | 0 | 16 or 32 KiB | 8 KiB ROM or 8 KiB RAM | None or 8 KiB |
 | MMC1 (1) | 0 | 16–256 KiB | Up to 128 KiB ROM, or 8 KiB RAM | None or 8 KiB |
 | UxROM (2) | 0, 1, 2 | 32–256 KiB | 8 KiB ROM or 8 KiB RAM | None |
+| MMC5 (5) | 0 | 16 KiB–1 MiB | Up to 1 MiB ROM, or 8 KiB RAM | 0, 8, 16, 32, or 64 KiB |
 
 These are the limits of the current cores, not all layouts possible on those
 mapper numbers. MMC1's additional outer PRG/RAM banking and RAM protection
 behavior remain incomplete.
+
+MMC5 uses the commercial ExROM RAM-chip arrangements, including the two 8 KiB
+chips in a 16 KiB board. RAM marked nonvolatile is emulated in memory, with no
+save-file persistence yet. See the [MMC5 pilot](mappers/mmc5.md) for bank aliases,
+graphics features, and remaining limitations.
 
 Only standard NES/Famicom console types and standard controllers are supported.
 NTSC ROMs use the existing NTSC model. Multiple-region ROMs also run using NTSC;
@@ -45,13 +51,18 @@ Truncated payloads are checked against the decoded ROM sizes and trainer offset.
 
 NES 2.0 CHR RAM must be explicitly declared. If CHR ROM is absent, the current
 cores require a declaration of exactly 8 KiB of CHR RAM. The loader does not
-silently invent that RAM. Mixed CHR ROM/RAM and RAM declared as nonvolatile
-are unsupported.
+silently invent that RAM. Mixed CHR ROM/RAM and nonvolatile CHR RAM are
+unsupported. Nonvolatile PRG RAM is accepted by MMC5's in-memory RAM model;
+the other supported NES 2.0 mappers still reject it.
 
-On supported NES 2.0 boards, declared 8 KiB PRG RAM is visible at CPU
+On supported NROM/MMC1 NES 2.0 boards, declared 8 KiB PRG RAM is visible at CPU
 `$6000`–`$7FFF`. Reads from absent PRG RAM or the unused expansion region
 return the last bus value, and writes do not store data there. Exact open-bus
 electrical behavior is not modeled.
+
+MMC5 owns additional registers at `$5000`–`$5206`, extended RAM at
+`$5C00`–`$5FFF`, and banked RAM/ROM windows. Its chip-selection and write
+protection rules replace the generic expansion storage for that cartridge.
 
 Legacy iNES keeps its earlier RAM assumptions and placeholder expansion
 storage. The loader skips a flagged 512-byte trainer to locate the PRG payload;
